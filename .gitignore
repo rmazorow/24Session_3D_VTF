@@ -51,4 +51,5 @@ vignettes/*.pdf
 */SurveyResults/*
 */Validation_Reviewer_Forms/*
 */r_*/*
-*/*processed*/*
+*/p_*/*
+*/TBT_processed/*
