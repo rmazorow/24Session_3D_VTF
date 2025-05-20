@@ -51,5 +51,5 @@ vignettes/*.pdf
 */SurveyResults/*
 */Validation_Reviewer_Forms/*
 */r_*/*
-*/p_*/*
-*/TBT_processed/*
+*/Trails3D/p_*/*
+*/Trails3D/TBT_processed/*
