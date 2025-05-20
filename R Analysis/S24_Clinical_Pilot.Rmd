@@ -1,0 +1,507 @@
+---
+title: "S24 VTF - Clinical Testing and Behavorial Performance"
+author: "Rocky Mazorow"
+date: "`r Sys.Date()`"
+output: pdf_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = FALSE, warning = FALSE, message = FALSE,
+                      fig.path = "r_images_cog/",
+                      fig.align = 'center',
+                      dev = c("pdf", "svg"))
+library(dplyr)
+library(plyr)
+library(ggplot2)
+library(knitr)
+library(R.matlab)
+library(DescTools)
+library(ggpubr)
+library(rstatix)
+library(ggh4x)
+library(ggbreak) 
+library(readxl)
+library(haven)
+```
+
+```{r eqn, echo=FALSE}
+#+++++++++++++++++++++++++
+# Function to calculate the mean and the standard deviation
+# for each group
+#+++++++++++++++++++++++++
+# data : a data frame
+# varname : the name of a column containing the variable
+#to be summarized
+# groupnames : vector of column names to be used as
+# grouping variables
+data_summary <- function(data, varname, groupnames=''){
+  require(plyr)
+  summary_func <- function(x, col){
+    c(n <- sum(!is.na( x[[col]] )),
+    mean <- mean( x[[col]], na.rm=TRUE),
+    sd <- sd( x[[col]], na.rm=TRUE),
+    se <- sd / sqrt(n),
+    ic <- se * qt((1-0.05)/2 + 0.5, n-1))
+  }
+  if (length(groupnames)==1 && groupnames=='') {
+    col = which(colnames(data) == varname) 
+    data_sum <- summary_func(data,col)
+  }
+  else {
+    data_sum <- ddply(data, groupnames, .fun=summary_func, varname)
+    data_sum <- rename(data_sum, c("V1" = "n", "V2" = "mean", "V3" = "sd", "V4" = "se", "V5" = "ic"))
+  }
+  return(data_sum)
+}
+
+label_facet <- function(var1, var2, col) {
+  t <- table(var1, var2)[,col]
+  lev <- levels(var1)
+  lab <- paste0(lev, " (n=", t, ")")
+  names(lab) <- lev
+  return(lab)
+}
+```
+
+```{r theme, echo=FALSE}
+# Font size in mm for certain functions
+shapes <- c(1, 23, 24, 22)
+colors1 <- c("#7E79CC", "#D45C9E", "#6AB0D8", "#E0AE16")
+colors2 <- c("#27F103", "#FF8000", "#9B00FF")
+colors3 <- c("#FF0000", "#FFFA00", "#0000FF")
+lines3 <- c("#FF0000", "black", "#0000FF")
+lines <- c("13","33","4313")
+dimShapes <- c(1, 21, 21, 21)
+
+f8 <- 2.822
+f9 <- 3.175
+f10 <- 3.528
+f11 <- 3.881
+f12 <- 4.233
+mmPx <- f12/12
+f14 <- mmPx*14
+f16 <- mmPx*16
+f24 <- mmPx*24
+f26 <- mmPx*26
+
+theme_RNM <- theme(panel.background = element_rect(fill = "white"), panel.border = element_blank(),
+          legend.key = element_rect(fill = "transparent"), legend.position=c(0.5, 1), 
+          legend.title = element_text(size = 9, face = "bold", color = "black", margin=margin(0,0.5,0,0, unit='cm')),
+          legend.text = element_text(size = 9, color = "black"), legend.background = element_rect(fill='transparent'),
+          legend.spacing.x = unit(0.8, 'cm'), legend.key.spacing.x = unit(0.3, 'cm'),
+          legend.box.margin = margin(0, 10, 0, 10), legend.direction="horizontal", legend.box = "horizontal",
+          #legend.box.background = element_rect(color="black", size=0.15),
+          plot.title = element_text(size = 10, color = "black", face = "bold", hjust = 0.5),
+          axis.title = element_text(size = 10, color = "black", face = "bold"), 
+          axis.text = element_text(size = 10, color = "black"), 
+          axis.line = element_line(color = "black"), axis.ticks = element_line(color = "black"),
+          axis.ticks.length=unit(0.1,"inch"), axis.title.x = element_blank(), axis.text.x = element_blank(), 
+          axis.line.x = element_blank(), axis.ticks.x = element_blank())  
+
+theme_poster <- theme(panel.background = element_rect(fill = "white"), panel.border = element_blank(),
+          legend.key = element_rect(fill = "transparent"), legend.position=c(0.5, 1), 
+          legend.title = element_text(size = 26, face = "bold", color = "black", margin=margin(0,0.5,0,0, unit='cm')),
+          legend.text = element_text(size = 26, color = "black"), 
+          legend.spacing.x = unit(1.5, 'cm'), legend.key.spacing.x = unit(0.3, 'cm'),
+          legend.box.margin = margin(5, 10, 5, 10), legend.direction="horizontal", legend.box = "horizontal",
+          legend.box.background = element_rect(color="black", size=0.2),
+          plot.title = element_text(size = 30, color = "black", face = "bold", hjust = 0.5),
+          axis.title = element_text(size = 30, color = "black", face = "bold"), 
+          axis.text = element_text(size = 30, color = "black"), 
+          axis.line = element_line(color = "black"), axis.ticks = element_line(color = "black"),
+          axis.ticks.length=unit(0.1,"inch"), axis.title.x = element_blank(), axis.text.x = element_blank(), 
+          axis.line.x = element_blank(), axis.ticks.x = element_blank())  
+```
+
+```{r compile_kins, echo = FALSE}
+overwrite <- TRUE
+
+if (overwrite) {
+  # Open .mat file and set order for block display
+  matlabFile   <- readMat('consolidated_data/Cog_ReachData.mat')
+  data <- matlabFile$ReachPerc[,,1]
+  data = lapply(data, unlist, use.names=FALSE)
+  data <- as.data.frame(data)
+  #data <- data[which(data$SubID != "WC_007" & data$SubID != "WC_008" & data$SubID != "WS_003" & 
+  #               data$SubID != "WS_005" & data$SubID != "WS_008" & data$SubID != "WY_002"), ]
+  data$SubID[which(data$SubID == 'W03_YS016')] <- 'WY_016'
+  data$SubID[which(data$SubID == 'W03_YS017')] <- 'WY_017'
+  #data <- data[which(data$SubID == 'WY_016' | data$SubID == 'WY_017' |  data$SubID == 'WC_003' |  data$SubID == 'WC_004' |
+  #                     data$SubID == 'WC_005' | data$SubID == 'WC_006' | data$SubID == 'WC_007' | data$SubID == 'WC_008' |
+  #                     data$SubID == 'WS_001' | data$SubID == 'WS_002' | data$SubID == 'WS_004' | data$SubID == 'WS_008'), ]
+  data <- data[which(data$Group == 'W' | data$Group == 'YS'), ]
+    
+  Reach <- as.data.frame(data)
+  Reach$Group <- as.factor(sapply(strsplit(data$SubID, '_'), function(x) x[1]))
+  Reach <- Reach[which(Reach$Group == 'WC' |  Reach$Group == 'WY' |  Reach$Group == 'WS'), ]
+  Reach$SubID <- as.factor(Reach$SubID)
+  Reach$Session <- as.factor(Reach$Session)
+  Reach$Block <- as.factor(Reach$Block)
+  Reach$BlockType <- factor(Reach$BlockType, levels = c('V', 'R', 'N', 'T', 'A', 'B', 'C'))
+  Reach$BlockDim <- as.factor(Reach$BlockDim)
+  
+  for (t in 1:nrow(Reach)) {
+    if (is.nan(Reach$BlockDim[t]) || Reach$BlockDim[t]=="NaN"){
+      Reach$BlockDim[t] <- NA
+    }
+  }
+  
+  for (i in colnames(Reach)) {
+    Reach[[i]][is.nan(Reach[[i]])] <- NA
+  }
+  
+  saveRDS(Reach, file = "r_data/Reach_cog.RDS")
+} else {
+  Reach <- readRDS("r_data/Reach_cog.RDS")
+}
+
+PvT <- Reach[which ((Reach$BlockType=='N' | Reach$BlockType=='T') & Reach$SubID!='WS_001'), ]  
+PvT$SubID <- factor(PvT$SubID)
+PvT$BlockType <- factor(PvT$BlockType, levels = c('N','T'))
+PvT$Block <- factor(PvT$Block, levels = c('N_01','T_01',
+                                          'N_08','T_08',
+                                          'N_15','T_15',
+                                          'N_22','T_22'))
+PvT$Group <- factor(PvT$Group, levels = c('WS','WC','WY'))
+levels(PvT$BlockType) <- c("Intrinsic", "Vibrotactile")
+sLabel <- paste("Stroke Survivor (n=", sum(PvT$Group=='WS')/8, ")", sep="")
+oLabel <- paste("Older Control (n=", sum(PvT$Group=='WC')/8, ")", sep="")
+yLabel <- paste("Younger Control (n=", sum(PvT$Group=='WY')/8, ")", sep="")
+levels(PvT$Group) <- c(sLabel, oLabel, yLabel)
+PvT$BlockPerSub <- paste(PvT$SubID, PvT$BlockType, sep="$")
+```
+
+```{r compile_sensorimotor, echo = FALSE}
+if (overwrite) {
+  # Open .sav file and set order for block display
+  data <- read_excel('consolidated_data/Sensorimotor_Testing_cog.xlsx', sheet="Summary", range="A1:I42", na="NA")
+
+  Sensorimotor <- data.frame(SubID = data$`Participant ID`, moveHand = data$`Move Hand`,
+                          WMFT_Func = as.numeric(data$`WFMT Function (0-80)`), 
+                          WMFT_Time = as.numeric(data$`WFMT Time (0-1800)`))
+  ids <- levels(PvT$SubID)
+  Sensorimotor <- Sensorimotor[which(Sensorimotor$SubID %in% ids),]
+  
+  Sens_copy <- Sensorimotor %>% 
+    mutate(Group = as.factor(sapply(strsplit(SubID, '_'), function(x) x[1])),
+          Temp_Func = ifelse(Group == "WS", WMFT_Func, NA),
+          Temp_Time = ifelse(Group == "WS", WMFT_Time, NA))
+  Sens_copy <- Sens_copy %>% 
+    mutate(zFunc = (Temp_Func - mean(Temp_Func,na.rm=TRUE))/sd(Temp_Func,na.rm=TRUE),
+           zTime = (Temp_Time - mean(Temp_Time,na.rm=TRUE))/sd(Temp_Time,na.rm=TRUE))
+  Sens_copy <- Sens_copy %>%
+    select(SubID, zFunc, zTime)
+  
+  Sensorimotor <- merge(Sensorimotor, Sens_copy, on = "SubID")
+  
+  SubID <- PvT$SubID[PvT$Block=='T_01']
+  Group <- PvT$Group[PvT$Block=='T_01']
+  
+  N1_error <- PvT$TrialError[PvT$Block=='N_01']
+  N8_error <- PvT$TrialError[PvT$Block=='N_08']
+  N22_error <- PvT$TrialError[PvT$Block=='N_22']
+  N1_speed <- PvT$TrialSpeed[PvT$Block=='N_01']
+  N8_speed <- PvT$TrialSpeed[PvT$Block=='N_08']
+  N22_speed <- PvT$TrialSpeed[PvT$Block=='N_22']
+  N1_path <- PvT$TrialRatio[PvT$Block=='N_01']
+  N8_path <- PvT$TrialRatio[PvT$Block=='N_08']
+  N22_path <- PvT$TrialRatio[PvT$Block=='N_22']
+  
+  T1_error <- PvT$TrialError[PvT$Block=='T_01']
+  T8_error <- PvT$TrialError[PvT$Block=='T_08']
+  T22_error <- PvT$TrialError[PvT$Block=='T_22']
+  T1_speed <- PvT$TrialSpeed[PvT$Block=='T_01']
+  T8_speed <- PvT$TrialSpeed[PvT$Block=='T_08']
+  T22_speed <- PvT$TrialSpeed[PvT$Block=='T_22']
+  T1_path <- PvT$TrialRatio[PvT$Block=='T_01']
+  T8_path <- PvT$TrialRatio[PvT$Block=='T_08']
+  T22_path <- PvT$TrialRatio[PvT$Block=='T_22']
+  
+  V1_speed <- Reach$TrialSpeed[Reach$Block=='V_01' & Reach$SubID!='WS_001']
+  R1_error <- Reach$TrialError[Reach$Block=='R_01' & Reach$SubID!='WS_001']
+  
+  Movement <- data.frame(SubID,Group, 
+                         N1_error,N8_error,N22_error,N1_speed,N8_speed,N22_speed,N1_path,N8_path,N22_path, 
+                         T1_error,T8_error,T22_error,T1_speed,T8_speed,T22_speed,T1_path,T8_path,T22_path, 
+                         V1_speed,R1_error)
+
+  Sensorimotor <- merge(Sensorimotor, Movement, on = "SubID")
+
+  saveRDS(Sensorimotor, file = "r_data/Sensorimotor_cog.RDS")
+} else {
+  Sensorimotor <- readRDS("r_data/Sensorimotor_cog.RDS")
+}
+```
+
+```{r compile_cognitive, echo = FALSE}
+if (overwrite) {
+  # Open .sav file and set order for block display
+  data <- read_sav('consolidated_data/Bobcat_data1.sav')
+  
+  Cognitive <- data.frame(SubID = data$Participant, Age = data$Age, 
+                          Exec = data$Exec_Only, Exec_WM = data$Exec_Attn_WM,
+                          Attn1 = data$Attn, Attn2 = data$Attn2, 
+                          WM1 = data$WM2, WM2 = data$WM3,
+                          TrB = data$TrailsBDuration, DSB = data$WAISDigitSpanBackward,
+                          VisMem = data$VS_Mem, VisMemMot = data$VS_MemMot, Motor = data$VSMotoronly)
+  Cognitive <- Cognitive[which(Cognitive$SubID %in% ids),]
+  
+  temp_Move <- Movement[which(Movement$SubID!="WY_016" & Movement$SubID!="WY_017"), ]
+  Cognitive <- merge(Cognitive, temp_Move, on = "SubID")
+  
+  Cognitive <- Cognitive %>% 
+    mutate(zTrB = (TrB - mean(TrB,na.rm=TRUE))/sd(TrB,na.rm=TRUE),
+           zDSB = (DSB - mean(DSB,na.rm=TRUE))/sd(DSB,na.rm=TRUE),
+           zVisMem = (VisMem - mean(VisMem,na.rm=TRUE))/sd(VisMem,na.rm=TRUE))
+  
+  saveRDS(Cognitive, file = "r_data/Cognitive.RDS")
+} else {
+  Cognitive <- readRDS("r_data/Cognitive.RDS")
+}
+
+```
+
+Aim 3: Characterize the relationship between clinical tests and 3D vibrotactile feedback acquisition.
+    1.  Greater decreases in target capture error will correlate to higher WMFT Functional scores
+    2.  Greater decreases in target capture error will correlate to higher working memory scores
+    3.  Greater decreases in target capture time will correlate to higher WMFT Time scores
+    4.  Greater decreases in target capture time will correlate to higher processing speeds
+
+
+# Hypothesis 3.1
+Greater decreases in target capture error will correlate to higher WMFT Functional scores
+
+Error Change = baseline - final  
+z-scores are used for x-axis   
+
+```{r smErr_WMFT_Func, echo = FALSE}
+SM <- Sensorimotor[which(!is.na(Sensorimotor$zFunc)), ]
+
+sens_fn <- ggplot(data = SM, aes(x = zFunc , y = Diff_error)) +
+        geom_smooth(method = "lm", fullrange = TRUE) + 
+        geom_point(aes(color = Group)) + ylab("Error Change") + 
+        scale_x_continuous(name="WMFT Functional Scores (0-80)", breaks=seq(-5, 5, 1)) +
+    stat_cor(method = "pearson", label.x = -1, label.y = 60) + 
+    theme(panel.background = element_rect(fill = "white"), 
+        panel.border = element_blank(),
+        axis.line = element_line(color = "black")) +
+    scale_color_manual(values=c("#e64b35", "#009875", "#8857a7"))
+
+sens_fn
+```
+
+\newpage
+
+# Hypothesis 3.2
+Greater decreases in target capture error will correlate to higher working memory scores
+
+Error Change = baseline - final  
+z-scores are used for x-axis   
+
+```{r cognErr_Exec_WM, echo = FALSE}
+exec_wm <- ggplot(data = Cognitive, aes(x = Exec_WM, y = Diff_error)) +
+        geom_smooth(method = "lm", fullrange = TRUE) + 
+        geom_point(aes(color = Group)) + ylab("Error Change") + 
+        scale_x_continuous(name="Executive Functioning + Working Memory (Exec_WM)", breaks=seq(-5, 5, 1)) +
+    stat_cor(method = "pearson", label.x = 0, label.y = 60) + 
+    theme(panel.background = element_rect(fill = "white"), 
+        panel.border = element_blank(),
+        axis.line = element_line(color = "black")) +
+    scale_color_manual(values=c("#e64b35", "#009875", "#8857a7"))
+```
+
+```{r cognErr_WM1, echo = FALSE}
+wm1 <- ggplot(data = Cognitive, aes(x = WM1, y = Diff_error)) +
+        geom_smooth(method = "lm", fullrange = TRUE) + 
+        geom_point(aes(color = Group)) + ylab("Error Change") +
+        scale_x_continuous(name="Working Memory (WM1)", breaks=seq(-5, 5, 1)) +
+    stat_cor(method = "pearson", label.x = 0, label.y = 60) + 
+    theme(panel.background = element_rect(fill = "white"), 
+        panel.border = element_blank(),
+        axis.line = element_line(color = "black")) +
+    scale_color_manual(values=c("#e64b35", "#009875", "#8857a7"))
+```
+
+```{r cognErr_WM2, echo = FALSE}
+wm2 <- ggplot(data = Cognitive, aes(x = WM2, y = Diff_error)) +
+        geom_smooth(method = "lm", fullrange = TRUE) + 
+        geom_point(aes(color = Group)) + ylab("Error Change") +
+        scale_x_continuous(name="Working Memory  (WM2)", breaks=seq(-5, 5, 1)) +
+    stat_cor(method = "pearson", label.x = 0, label.y = 60) +  
+    theme(panel.background = element_rect(fill = "white"), 
+        panel.border = element_blank(),
+        axis.line = element_line(color = "black")) +
+    scale_color_manual(values=c("#e64b35", "#009875", "#8857a7"))
+```
+
+```{r cognErr_TrB, echo = FALSE}
+trB <- ggplot(data = Cognitive, aes(x = zTrB, y = Diff_error)) +
+        geom_smooth(method = "lm", fullrange = TRUE) + 
+        geom_point(aes(color = Group)) + ylab("Error Change") + 
+        scale_x_continuous(name="Written Trails B Duration", breaks=seq(-5, 5, 1)) +
+    stat_cor(method = "pearson", label.x = 0, label.y = 60) +  
+    theme(panel.background = element_rect(fill = "white"), 
+        panel.border = element_blank(),
+        axis.line = element_line(color = "black")) +
+    scale_color_manual(values=c("#e64b35", "#009875", "#8857a7"))
+```
+
+```{r cognErr_DSB, echo = FALSE}
+dsb <- ggplot(data = Cognitive, aes(x = zDSB, y = Diff_error)) +
+        geom_smooth(method = "lm", fullrange = TRUE) + 
+        geom_point(aes(color = Group)) + ylab("Error Change") + 
+        scale_x_continuous(name="Digit Span Backwards", breaks=seq(-5, 5, 1)) +
+    stat_cor(method = "pearson", label.x = 0, label.y = 60) +  
+    theme(panel.background = element_rect(fill = "white"), 
+        panel.border = element_blank(),
+        axis.line = element_line(color = "black")) +
+    scale_color_manual(values=c("#e64b35", "#009875", "#8857a7"))
+```
+
+```{r cognErr_VM, echo = FALSE}
+visMem <- ggplot(data = Cognitive, aes(x = zVisMem, y = Rblock)) +
+        geom_smooth(method = "lm", fullrange = TRUE) + 
+        geom_point(aes(color = Group)) + ylab("Error R") + 
+        scale_x_continuous(name="Visual Memory", breaks=seq(-5, 5, 1)) +
+    stat_cor(method = "pearson", label.x = 0, label.y = 60) +  
+    theme(panel.background = element_rect(fill = "white"), 
+        panel.border = element_blank(),
+        axis.line = element_line(color = "black")) +
+    scale_color_manual(values=c("#e64b35", "#009875", "#8857a7"))
+```
+
+```{r cognErr_error, echo = FALSE, fig.height=9.5, fig.width=8}
+ggarrange(
+  ggarrange(exec_wm, visMem, align="h", ncol = 2, common.legend = TRUE),
+  ggarrange(wm1, wm2, align="h", ncol = 2, legend = "none"),
+  ggarrange(trB, dsb, align="h", ncol = 2, legend = "none"),
+  nrow = 3, common.legend = TRUE)
+```
+
+\newpage
+
+# Hypothesis 3.3
+Greater decreases in target capture time will correlate to higher WMFT Time scores
+
+Speed Change = baseline - final  
+Path Ratio = optimal path length / actual path length  
+Path Ratio Change = baseline - final  
+z-scores are used for x-axis   
+
+```{r smSpd_WMFT_Time, echo = FALSE}
+sens_tm <- ggplot(data = SM, aes(x = zTime , y = Diff_speed)) +
+        geom_smooth(method = "lm", fullrange = TRUE) + 
+        geom_point(aes(color = Group)) + ylab("Speed Change") + 
+        scale_x_continuous(name="WMFT Time Scores (0-1800)", breaks=seq(-5, 5, 1)) +
+    stat_cor(method = "pearson", label.x = -1, label.y = 20) + 
+    theme(panel.background = element_rect(fill = "white"), 
+        panel.border = element_blank(),
+        axis.line = element_line(color = "black")) +
+    scale_color_manual(values=c("#e64b35", "#009875", "#8857a7"))
+sens_tm
+```
+
+```{r smPth_WMFT_Time, echo = FALSE}
+sens_pt <- ggplot(data = SM, aes(x = zTime , y = Diff_path)) +
+        geom_smooth(method = "lm", fullrange = TRUE) + 
+        geom_point(aes(color = Group)) + ylab("Path Ratio Change") + 
+        scale_x_continuous(name="WMFT Time Scores (0-1800)", breaks=seq(-5, 5, 1)) +
+    stat_cor(method = "pearson", label.x = -1, label.y = 20) + 
+    theme(panel.background = element_rect(fill = "white"), 
+        panel.border = element_blank(),
+        axis.line = element_line(color = "black")) +
+    scale_color_manual(values=c("#e64b35", "#009875", "#8857a7"))
+sens_pt
+```
+
+\newpage
+
+# Hypothesis 3.4
+Greater decreases in target capture time will correlate to higher processing speeds
+
+Speed Change = baseline - final  
+Path Ratio = optimal path length / actual path length  
+Path Ratio Change = baseline - final  
+z-scores are used for x-axis   
+
+```{r cognSpd_Exec, echo = FALSE}
+exec <- ggplot(data = Cognitive, aes(x = Exec, y = Diff_speed)) +
+        geom_smooth(method = "lm", fullrange = TRUE) + 
+        geom_point(aes(color = Group)) + ylab("Speed Change") + 
+        scale_x_continuous(name="Executive Functioning (Exec)", breaks=seq(-5, 5, 1)) +
+    stat_cor(method = "pearson", label.x = 0, label.y = 10) + 
+    theme(panel.background = element_rect(fill = "white"), 
+        panel.border = element_blank(),
+        axis.line = element_line(color = "black")) +
+    scale_color_manual(values=c("#e64b35", "#009875", "#8857a7"))
+```
+
+```{r cognSpd_Exec_WM, echo = FALSE}
+exec_wm <- ggplot(data = Cognitive, aes(x = Exec_WM, y = Diff_speed)) +
+        geom_smooth(method = "lm", fullrange = TRUE) + 
+        geom_point(aes(color = Group)) + ylab("Speed Change") +
+        scale_x_continuous(name="Executive Functioning + Working Memory (Exec_WM)", breaks=seq(-5, 5, 1)) +
+    stat_cor(method = "pearson", label.x = 0, label.y = 10) + 
+    theme(panel.background = element_rect(fill = "white"), 
+        panel.border = element_blank(),
+        axis.line = element_line(color = "black")) +
+    scale_color_manual(values=c("#e64b35", "#009875", "#8857a7"))
+```
+
+```{r cognSpd_Attn1, echo = FALSE}
+attn1 <- ggplot(data = Cognitive, aes(x = Attn1, y = Diff_speed)) +
+        geom_smooth(method = "lm", fullrange = TRUE) + 
+        geom_point(aes(color = Group)) + ylab("Speed Change") + 
+        scale_x_continuous(name="Attention (Attn1)", breaks=seq(-5, 5, 1)) +
+    stat_cor(method = "pearson", label.x = 0, label.y = 10) + 
+    theme(panel.background = element_rect(fill = "white"), 
+        panel.border = element_blank(),
+        axis.line = element_line(color = "black")) +
+    scale_color_manual(values=c("#e64b35", "#009875", "#8857a7"))
+```
+
+```{r cognSpd_Attn2, echo = FALSE}
+attn2 <- ggplot(data = Cognitive, aes(x = Attn2, y = Diff_speed)) +
+        geom_smooth(method = "lm", fullrange = TRUE) + 
+        geom_point(aes(color = Group)) + ylab("Speed Change") + 
+        scale_x_continuous(name="Attention (Attn2)", breaks=seq(-5, 5, 1)) +
+    stat_cor(method = "pearson", label.x = 0, label.y = 10) + 
+    theme(panel.background = element_rect(fill = "white"), 
+        panel.border = element_blank(),
+        axis.line = element_line(color = "black")) +
+    scale_color_manual(values=c("#e64b35", "#009875", "#8857a7"))
+```
+
+```{r cognSpd_WM1, echo = FALSE}
+wm1 <- ggplot(data = Cognitive, aes(x = WM1, y = Diff_speed)) +
+        geom_smooth(method = "lm", fullrange = TRUE) + 
+        geom_point(aes(color = Group)) + ylab("Speed Change") + 
+        scale_x_continuous(name="Working Memory (WM1)", breaks=seq(-5, 5, 1)) +
+    stat_cor(method = "pearson", label.x = 0, label.y = 10) + 
+    theme(panel.background = element_rect(fill = "white"), 
+        panel.border = element_blank(),
+        axis.line = element_line(color = "black")) +
+    scale_color_manual(values=c("#e64b35", "#009875", "#8857a7"))
+```
+
+```{r cognSpd_WM2, echo = FALSE}
+wm2 <- ggplot(data = Cognitive, aes(x = WM2, y = Diff_speed)) +
+        geom_smooth(method = "lm", fullrange = TRUE) + 
+        geom_point(aes(color = Group)) + ylab("Speed Change") + 
+        scale_x_continuous(name="Working Memory (WM2)", breaks=seq(-5, 5, 1)) +
+    stat_cor(method = "pearson", label.x = 0, label.y = 10) + 
+    theme(panel.background = element_rect(fill = "white"), 
+        panel.border = element_blank(),
+        axis.line = element_line(color = "black")) +
+    scale_color_manual(values=c("#e64b35", "#009875", "#8857a7"))
+```
+
+```{r cogn_speed, echo = FALSE, fig.height=9.5, fig.width=8}
+ggarrange(
+  ggarrange(exec, exec_wm, align="h", ncol = 2, common.legend = TRUE),
+  ggarrange(attn1, attn2, align="h", ncol = 2, legend = "none"),
+  ggarrange(wm1, wm2, align="h", ncol = 2, legend = "none"),
+  nrow = 3, common.legend = TRUE)
+```
+
+\newpage

@@ -1,0 +1,1908 @@
+---
+title: "Stroke Survivor VTF Pilot"
+author: "Rocky Mazorow"
+date: "`r Sys.Date()`"
+output:
+  pdf_document:
+    toc: true
+    toc_depth: 3
+    number_sections: true
+    fig_height: 3
+urlcolor: blue
+---
+
+```{r setup, include=FALSE}
+library(knitr)
+library(kableExtra)
+library(R.matlab)
+library(readxl)
+#library(stringr)
+library(dplyr)
+library(ggplot2)
+library(reshape2)
+library(haven)
+library(patchwork)
+library(ggh4x)
+library(ggpubr)
+library(rstatix)
+library(cowplot)
+library(effsize)
+
+knitr::opts_chunk$set(echo = FALSE, warning = FALSE, message = FALSE,
+                      fig.path = "r_images_SS/",
+                      fig.align = 'center',
+                      dev = c("pdf", "svg"))
+```
+
+```{r eqn, echo=FALSE}
+#+++++++++++++++++++++++++
+# Function to calculate the mean and the standard deviation
+# for each group
+#+++++++++++++++++++++++++
+# data : a data frame
+# varname : the name of a column containing the variable
+#to be summarized
+# groupnames : vector of column names to be used as
+# grouping variables
+data_summary <- function(data, varname, groupnames=''){
+  require(plyr)
+  summary_func <- function(x, col){
+    c(n <- sum(!is.na( x[[col]] )),
+    mean <- mean( x[[col]], na.rm=TRUE),
+    sd <- sd( x[[col]], na.rm=TRUE),
+    se <- sd / sqrt(n),
+    ic <- se * qt((1-0.05)/2 + 0.5, n-1))
+  }
+  if (length(groupnames)==1 && groupnames=='') {
+    col = which(colnames(data) == varname) 
+    data_sum <- summary_func(data,col)
+  }
+  else {
+    data_sum <- ddply(data, groupnames, .fun=summary_func, varname)
+    data_sum <- rename(data_sum, c("V1" = "n", "V2" = "mean", "V3" = "sd", "V4" = "se", "V5" = "ic"))
+  }
+  return(data_sum)
+}
+
+label_facet <- function(var1, var2, col) {
+  t <- table(var1, var2)[,col]
+  lev <- levels(var1)
+  lab <- paste0(lev, " (n=", t, ")")
+  names(lab) <- lev
+  return(lab)
+}
+```
+
+```{r theme, echo=FALSE}
+# Font size in mm for certain functions
+shapes <- c(1, 23, 24, 22)
+colors1 <- c("#7E79CC", "#D45C9E", "#6AB0D8", "#E0AE16")
+colors2 <- c("#27F103", "#FF8000", "#9B00FF")
+colors3 <- c("#FF0000", "#FFFA00", "#0000FF")
+lines3 <- c("#FF0000", "black", "#0000FF")
+lines <- c("13","33","4313")
+dimShapes <- c(1, 21, 21, 21)
+
+f8 <- 2.822
+f9 <- 3.175
+f10 <- 3.528
+f11 <- 3.881
+f12 <- 4.233
+mmPx <- f12/12
+f14 <- mmPx*14
+f16 <- mmPx*16
+f24 <- mmPx*24
+f26 <- mmPx*26
+
+theme_RNM <- theme(panel.background = element_rect(fill = "white"), panel.border = element_blank(),
+          legend.key = element_rect(fill = "transparent"), legend.position=c(0.5, 1), 
+          legend.title = element_text(size = 9, face = "bold", color = "black", margin=margin(0,0.5,0,0, unit='cm')),
+          legend.text = element_text(size = 9, color = "black"), legend.background = element_rect(fill='transparent'),
+          legend.spacing.x = unit(0.8, 'cm'), legend.key.spacing.x = unit(0.3, 'cm'),
+          legend.box.margin = margin(0, 10, 0, 10), legend.direction="horizontal", legend.box = "horizontal",
+          #legend.box.background = element_rect(color="black", size=0.15),
+          plot.title = element_text(size = 10, color = "black", face = "bold", hjust = 0.5),
+          axis.title = element_text(size = 10, color = "black", face = "bold"), 
+          axis.text = element_text(size = 10, color = "black"), 
+          axis.line = element_line(color = "black"), axis.ticks = element_line(color = "black"),
+          axis.ticks.length=unit(0.1,"inch"), axis.title.x = element_blank(), axis.text.x = element_blank(), 
+          axis.line.x = element_blank(), axis.ticks.x = element_blank())  
+
+theme_poster <- theme(panel.background = element_rect(fill = "white"), panel.border = element_blank(),
+          legend.key = element_rect(fill = "transparent"), legend.position=c(0.5, 1), 
+          legend.title = element_text(size = 26, face = "bold", color = "black", margin=margin(0,0.5,0,0, unit='cm')),
+          legend.text = element_text(size = 26, color = "black"), 
+          legend.spacing.x = unit(1.5, 'cm'), legend.key.spacing.x = unit(0.3, 'cm'),
+          legend.box.margin = margin(5, 10, 5, 10), legend.direction="horizontal", legend.box = "horizontal",
+          legend.box.background = element_rect(color="black", size=0.2),
+          plot.title = element_text(size = 30, color = "black", face = "bold", hjust = 0.5),
+          axis.title = element_text(size = 30, color = "black", face = "bold"), 
+          axis.text = element_text(size = 30, color = "black"), 
+          axis.line = element_line(color = "black"), axis.ticks = element_line(color = "black"),
+          axis.ticks.length=unit(0.1,"inch"), axis.title.x = element_blank(), axis.text.x = element_blank(), 
+          axis.line.x = element_blank(), axis.ticks.x = element_blank())  
+```
+
+```{r compile_kins, echo = FALSE}
+overwrite <- FALSE
+
+if (overwrite) {
+  # Open .mat file and set order for block display
+  matlabFile   <- readMat('consolidated_data/SS_ReachData.mat')
+  data <- matlabFile$ReachPerc[,,1]
+  data <-lapply(data, unlist, use.names=FALSE)
+  data <- as.data.frame(data)
+  data$Group <- as.factor(sapply(strsplit(data$SubID, '_'), function(x) x[1]))
+  
+  Reach <- as.data.frame(data)
+  Reach$SubID <- as.factor(Reach$SubID)
+  Reach$Session <- as.factor(Reach$Session)
+  Reach$Block <- as.factor(Reach$Block)
+  Reach$BlockType <- factor(Reach$BlockType, levels = c('V', 'R', 'N', 'T', 'A', 'B', 'C'))
+  
+  for (t in 1:nrow(Reach)) {
+    if (is.nan(Reach$BlockDim[t]) || Reach$BlockDim[t]=="NaN"){
+      Reach$BlockDim[t] <- NA
+    }
+  }
+  
+  for (i in colnames(Reach)) {
+    Reach[[i]][is.nan(Reach[[i]])] <- NA
+  }
+  
+  Reach$BlockDim <- as.factor(Reach$BlockDim)
+  
+  Reach <- select(Reach, c('SubID','Group','Session',"Block","BlockType",
+                           "xError","yError","zError","TrialError",
+                           "xSpeed","ySpeed","zSpeed","TrialSpeed",
+                           "xRatio","yRatio","zRatio", "TrialRatio"))
+
+  saveRDS(Reach, file = "r_data/SS_Reach.RDS")
+} else {
+  Reach <- readRDS("r_data/SS_Reach.RDS")
+}
+
+if (overwrite) {
+  # Open .mat file and set order for block display
+  matlabFile   <- readMat('consolidated_data/SubTraining.mat')
+  data <- matlabFile$SubTraining[,,1]
+  data <- lapply(data, unlist, use.names=FALSE)
+  data <- as.data.frame(data)
+  
+  Train <- as.data.frame(data)
+  Train$SubID <- as.factor(Train$SubID)
+  Train$Block <- as.factor(Train$Block)
+  
+  for (i in colnames(Train)) {
+    Train[[i]][is.nan(Train[[i]])] <- NA
+  }
+
+  saveRDS(Train, file = "r_data/SS_Train.RDS")
+} else {
+  Train <- readRDS("r_data/SS_Train.RDS")
+}
+```
+
+```{r compile_subs, echo = FALSE}
+if (overwrite) {
+  # Open .mat file and set order for block display
+  matlabFile   <- readMat('consolidated_data/SS_SubInfo.mat')
+  data <- matlabFile$SubInfo[, , 1]
+  data <- lapply(data, unlist, use.names=FALSE)  
+  data <- as.data.frame(data)
+  data$Group <- as.factor(sapply(strsplit(data$SubID, '_'), function(x) x[1]))
+
+  
+  Subs <- as.data.frame(data)
+  Subs$SubID <- as.factor(Subs$SubID)
+  Subs$Type <- as.factor(Subs$Type)
+  Subs$Sex <- as.factor(Subs$Sex)
+  Subs$MoveHand <- as.factor(Subs$MoveHand)
+  Subs$Sex <- recode_factor(Subs$Sex,'Male' = 'M', 'Female' = 'F')
+  Subs$MoveHand <- recode_factor(Subs$MoveHand,'Right' = 'R', 'Left' = 'L')
+  Subs$xDim <- Subs$xDim / 10
+  Subs$yDim <- Subs$yDim / 10
+  Subs$zDim <- Subs$zDim / 10
+  Subs$YearsSinceStroke <- c(6,8,8,5,1,2,6)
+  
+  data <- read_excel('consolidated_data/Sensorimotor_Testing.xlsx', sheet="Summary", range="A1:I29", na="NA")
+
+  Sensorimotor <- data.frame(SubID = data$`Participant ID`,
+                            FMA_UE_Motor = as.numeric(data$`FMA_UE Motor (0-66)`), 
+                            FMA_UE_Sensation = as.numeric(data$`FMA_UE Sensation (0-12)`))
+  
+  Subs <- merge(Subs, Sensorimotor, on = "SubID")
+  
+  for (i in colnames(Subs)) {
+    Subs[[i]][is.nan(Subs[[i]])] <- NA
+  }
+  saveRDS(Subs, file = "r_data/SS_Subs.RDS")
+} else {
+  Subs <- readRDS("r_data/SS_Subs.RDS")
+}
+
+temp <- data.frame(SubID = Subs$SubID,
+                   xDim  = Subs$xDim * 10,
+                   yDim  = Subs$yDim * 10,
+                   zDim  = Subs$zDim * 10)
+
+Reach <- merge(Reach, temp, on = "SubID")
+Reach$xSpeed <- (Reach$xSpeed * Reach$xDim) / 100
+Reach$ySpeed <- (Reach$ySpeed * Reach$yDim) / 100
+Reach$zSpeed <- (Reach$zSpeed * Reach$zDim) / 100
+Reach$TrialSpeed <- sqrt(Reach$xSpeed^2 + Reach$ySpeed^2 + Reach$zSpeed^2)
+
+deficit <- c()
+for (s in 1:length(Subs$SubID)) {
+  if (Subs$FMA_UE_Motor[s] < 45 && Subs$FMA_UE_Sensation[s] < 10) {
+      deficit[s] <- "Sensory+Motor"
+  }
+  else if (Subs$FMA_UE_Motor[s] < 45) {
+      deficit[s] <- "Motor"
+  }
+  else if (Subs$FMA_UE_Sensation[s] < 10) {
+      deficit[s] <- "Sensory"
+  }
+  else {
+      deficit[s] <- "None"
+  }
+}
+```
+
+```{r compile_reach, echo = FALSE}
+dodge <- 0.3
+
+# Add label to T_01 and C_02
+label <- c()
+num <- 1
+for (s in 1:length(Reach$SubID)) {
+  label[s] <- paste("S", sprintf("%02d", num), sep = "")
+  if(Reach$Block[s] == "T_22") {
+    num <- num+1
+  }
+}
+Reach$Label <- label
+
+
+# Sublist blocks of interest
+Learn <- Reach[which (Reach$Block=='V_01' | Reach$Block=='N_01' | Reach$Block=='T_01' |
+                      Reach$Block=='C_02' | Reach$Block=='C_21' | 
+                      Reach$Block=='N_22' | Reach$Block=='T_22'), ]
+Learn$Block <- factor(Learn$Block, levels = c('V_01','N_01','T_01',
+                                              'C_02','C_21','N_22','T_22'))
+Learn$BlockType <- factor(Learn$BlockType, levels = c('V','N','T','C'))
+Learn$SubPerBlock <- factor(paste(Learn$SubID, Learn$BlockType, sep="."))
+Learn$Deficit <- factor(rep(deficit, each = length(levels(Learn$Block))))
+Learn$Block <- factor(Learn$Block, levels = c('V_01','N_01','N_22','T_01','T_22','C_02','C_21'))
+Learn$xPos <- rep(c(1,2.8,5.8,8.8,10.2,4.2,7.2), by=levels(Learn$SubID))
+
+
+# Dataframe for deficit subjects
+hasDef <- c("WS_004","WS_005","WS_008")
+isDef <- c("Sensory+Motor","Motor","Motor")
+subLabel <- c("S04","S05","S07")
+
+SubDeficit <- Train[which(Train$SubID=="WS_004" | Train$SubID=="WS_005" | Train$SubID=="WS_008"), ]
+SubDeficit <- SubDeficit[with(SubDeficit, order(SubID, Block, Trial)), ]
+
+SubError <- data_summary(SubDeficit, varname="Error", groupnames=c("SubID","Block"))
+SubError <- SubError %>% 
+          arrange(factor(SubID, levels = c(hasDef)), 
+                  factor(Block, levels = c("V_01","N_01","T_01","C_02","C_21","N_22","T_22")))
+SubError$Deficit <- rep(isDef, each=7)
+SubError$SubPerBlock <- factor(paste(SubError$SubID, substring(SubError$Block,1,1), sep="."))
+SubError$Label <- factor(rep(subLabel, each=7))
+SubError$xPos <- rep(c(1,2.8,5.8,8.8,10.2,4.2,7.2), by=levels(SubError$SubID))
+SubError$mean <- as.numeric(SubError$mean)
+SubError$se <- as.numeric(SubError$se)
+SubError$xPos[SubError$Label=="S04"] <- SubError$xPos[SubError$Label=="S04"] - dodge
+SubError$xPos[SubError$Label=="S07"] <- SubError$xPos[SubError$Label=="S07"] + dodge
+
+SubSpeed <- data_summary(SubDeficit, varname="Speed", groupnames=c("SubID","Block"))
+SubSpeed <- SubSpeed %>% 
+          arrange(factor(SubID, levels = c(hasDef)), 
+                  factor(Block, levels = c("V_01","N_01","T_01","C_02","C_21","N_22","T_22")))
+SubSpeed$Deficit <- rep(isDef, each=7)
+SubSpeed$SubPerBlock <- factor(paste(SubSpeed$SubID, substring(SubSpeed$Block,1,1), sep="."))
+SubSpeed$Label <- factor(rep(subLabel, each=7))
+SubSpeed$xPos <- rep(c(1,2.8,5.8,8.8,10.2,4.2,7.2), by=levels(SubSpeed$SubID))
+SubSpeed$mean <- as.numeric(SubSpeed$mean)
+SubSpeed$se <- as.numeric(SubSpeed$se)
+SubSpeed$xPos[SubSpeed$Label=="S04"] <- SubSpeed$xPos[SubSpeed$Label=="S04"] - dodge
+SubSpeed$xPos[SubSpeed$Label=="S07"] <- SubSpeed$xPos[SubSpeed$Label=="S07"] + dodge
+
+SubRatio <- data_summary(SubDeficit, varname="Ratio", groupnames=c("SubID","Block"))
+SubRatio <- SubRatio %>% 
+          arrange(factor(SubID, levels = c(hasDef)), 
+                  factor(Block, levels = c("V_01","N_01","T_01","C_02","C_21","N_22","T_22")))
+SubRatio$Deficit <- rep(isDef, each=7)
+SubRatio$SubPerBlock <- factor(paste(SubRatio$SubID, substring(SubRatio$Block,1,1), sep="."))
+SubRatio$Label <- factor(rep(subLabel, each=7))
+SubRatio$xPos <- rep(c(1,2.8,5.8,8.8,10.2,4.2,7.2), by=levels(SubRatio$SubID))
+SubRatio$mean <- as.numeric(SubRatio$mean)
+SubRatio$se <- as.numeric(SubRatio$se)
+SubRatio$xPos[SubRatio$Label=="S04"] <- SubRatio$xPos[SubRatio$Label=="S04"] - dodge
+SubRatio$xPos[SubRatio$Label=="S07"] <- SubRatio$xPos[SubRatio$Label=="S07"] + dodge
+
+```
+
+```{r compile_survey, echo = FALSE}
+if (overwrite) {
+  matlabFile   <- readMat('consolidated_data/SurveyScores.mat')
+  data <- matlabFile$SurveyScores[,,1]
+  data <-lapply(data, unlist, use.names=FALSE)
+  data <- as.data.frame(data)
+  data <- data[which(data$SubID == 'WS_001' | data$SubID == 'WS_002' | data$SubID == 'WS_003' | 
+                     data$SubID == 'WS_004' | data$SubID == 'WS_005' | 
+                     data$SubID == 'WS_007' | data$SubID == 'WS_008'), ]
+    
+  Survey <-  as.data.frame(data)
+  Survey$SubID <- factor(Survey$SubID)
+  Survey$Group <- sapply(strsplit(data$SubID, '_'), function(x) x[1])
+  Survey$SubID <- factor(Survey$SubID)
+  Survey$Group <- factor(Survey$Group)
+  
+  saveRDS(Survey, file = "r_data/SS_Survey.RDS")
+} else {
+  Survey <- readRDS("r_data/SS_Survey.RDS")
+}
+
+SUS <- data.frame(Group = Survey$Group, Score = Survey$SusAvg, Scale = rep("SUS", by = length(levels(Survey$SubID))))
+data_sus <- data_summary(SUS, varname="Score", groupnames="Group")
+data_sus$Scale <-rep("SUS", by = length(levels(Survey$Group)))
+
+IMI <- data.frame(Group = factor(),
+                  Score=double(),
+                  Scale=factor())
+for (s in 1:length(Survey$SubID)) {
+  i <- (s-1)*6 + 1
+  Group <- rep(Survey$Group[s], by = 6)
+  Score <- c(Survey$ImiInterest[s], Survey$ImiEffort[s], Survey$ImiValue[s], Survey$ImiCompetence[s], Survey$ImiChoice[s], (8 - Survey$ImiPressure[s]))
+  Scale <- c('Enjoyment', 'Effort',  'Usefulness',  'Competence', 'Choice', 'Tension*')
+  IMI <- rbind(IMI, data.frame(Group, Score,Scale))
+}
+IMI$Scale <- factor(IMI$Scale)
+IMI$Scale <- ordered(IMI$Scale, levels = c('Enjoyment','Effort','Competence','Choice','Usefulness','Tension*'))
+IMI$Group <- factor(IMI$Group)
+data_IMI <- data_summary(IMI, varname="Score", groupnames=c("Group","Scale"))
+
+QST <- data.frame(Group = factor(),
+                  Score=double(),
+                  Scale=factor())
+for (s in 1:length(Survey$SubID)) {
+  i <- (s-1)*6 + 1
+  Group <- rep(Survey$Group[s], by = 6)
+  Score <- c(Survey$QuestWeight[s], Survey$QuestSafety[s], Survey$QuestEase[s], Survey$QuestComfort[s], Survey$QuestEffect[s], Survey$QuestService[s], Survey$QuestAvg[s])
+  Scale <- c('Weight', 'Safety',  'Ease of Use',  'Comfort', 'Effectiveness', 'Instructions', 'Average')
+  QST <- rbind(QST, data.frame(Group, Score,Scale))
+}
+QST$Scale <- factor(QST$Scale)
+QST$Group <- factor(QST$Group)
+data_QST <- data_summary(QST, varname="Score", groupnames=c("Group","Scale"))
+
+qItems <- data.frame(SubID = rep(Survey[[1]],3), 
+                     Group = rep(Survey[[19]],3), 
+                     Items=c(Survey[[16]], Survey[[17]], Survey[[18]]))
+qItems$SubID <- as.factor(qItems$SubID)
+qItems$Items <- as.factor(qItems$Items)
+levels(qItems$Items) <- c("Comfort", "Ease of Use", "Effectiveness", "Instructions", "Safety", "Weight" )
+
+```
+
+\newpage
+
+# Hypotheses
+
+1.  Multi-session training without concurrent vision will lead to improved reaching accuracy and efficiency with 3-dimensional vibrotactile feedback for survivors of stroke.
+2.  Participants will find VTF and the training useful, motivating, and satisfying.
+
+```{r methods, echo = FALSE, fig.align='center', out.width='80%', fig.cap = "Study set-up and protocol. A) Right-handed participant in arm support chair holding squeeze ball and wearing glasses to block sight of arm. B) Visual workspace showing the 5x5x5 grid of targets and a cursor corresponding to the position of the hand in the physical workspace, as shown during visual feedback. C) Vibration motor placement on stationary arms (i.e., less affected, ipsilesional arm). D) Protocol of study across 21 sessions with feedback labeled for each block. Training sessions included vibration feedback with additional visual feedback for after-squeeze correction to target. Testing sessions did not include after-squeeze visual feedback and consequent corrections."}
+knitr::include_graphics("r_images_SS/methods.png")
+```
+
+```{r handplots, echo = FALSE, fig.align='center', out.width='80%', fig.cap = "A single participant’s representative hand plots from both testing sessions. The 3-dimensional movements are decomposed and projected into 2-dimensional components."}
+knitr::include_graphics("r_images_SS/handplots.png")
+```
+
+\newpage
+
+# Participant Demographics
+
+```{r sub_table, echo = FALSE}
+summ_Subs <- Subs[,c(4,6,5,12,13,14)]
+rownames(summ_Subs) <- c(unique(Reach$Label))
+options(knitr.kable.NA = '-')
+kable(summ_Subs, align='c',
+      col.names = c('Sex', 'Age', 'Contralesional Side', 'Years Since Stroke', 'FMA-UE Motor', 'FMA-UE Sensation'),
+      caption= "Demographic and clinical data for the participating subjects. The Upper Extremity portion of the Fugl-Meyer Assessment (FMA-UE) is scores [0,66] for the motor section and [0,12] for the sensation section.") %>%
+  column_spec(1:3,width = "0.25in") %>%
+  column_spec(4:7,width = "1in") %>%
+  row_spec(0,bold=TRUE)
+
+```
+
+```{r training_tables, echo = FALSE}
+subNames <- levels(Train$SubID)
+
+error_Pval <- c(NA)
+error_Impr <- c('')
+error_Sigf <- c('')
+error_df   <- c(NA)
+error_stat <- c(NA)
+speed_Pval <- c(NA)
+speed_Impr <- c('')
+speed_Sigf <- c('')
+speed_df   <- c(NA)
+speed_stat <- c(NA)
+ratio_Pval <- c(NA)
+ratio_Impr <- c('')
+ratio_Sigf <- c('')
+ratio_df   <- c(NA)
+ratio_stat <- c(NA)
+
+error_diff <- matrix(, nrow = 7, ncol = 8)
+colnames(error_diff) <- c("Mean (N)","Cohen's d (N)", "95 Range (N)", "Effect Spread (N)", 
+                          "Mean (T)","Cohen's d (T)", "95 Range (T)", "Effect Spread (T)")
+rownames(error_diff) <- subNames
+error_diff[1,] <- rep(NA, 8)
+
+for (s in 2:7) {
+  temp <- Train[which(Train$SubID == subNames[s] & 
+                        (Train$Block == "N_01" | Train$Block == "N_22")), ]
+  
+  d <- cohen.d(temp$Error[temp$Block == "N_01"], temp$Error[temp$Block == "N_22"], na.rm=TRUE)
+  error_diff[s,1] <- mean(temp$Error[temp$Block == "N_01"],na.rm=TRUE) - mean(temp$Error[temp$Block == "N_22"],na.rm=TRUE)
+  error_diff[s,2] <- d$estimate
+  error_diff[s,3] <- d$conf.int[[2]] - d$conf.int[[1]]
+  error_diff[s,4] <- (error_diff[s,3]/2)/error_diff[s,2]*100
+  
+  subErr <- t.test(Error ~ Block, data = temp)
+  subSpd <- t.test(Speed ~ Block, data = temp)
+  subRat <- t.test(Ratio ~ Block, data = temp)
+  
+  error_Pval[s] <- subErr$p.value #ifelse(subErr$p.value < 0.001, '<0.001', subErr$p.value)
+  error_Impr[s] <- ifelse(subErr$statistic < 0, '-', '+')
+  error_Sigf[s] <- ifelse(is.na(subErr$p.value) || subErr$p.value < 0.05, '*', '')
+  error_df[s]   <- subErr$parameter[[1]]
+  error_stat[s] <- subErr$statistic[[1]]
+  speed_Pval[s] <- subSpd$p.value #ifelse(subSpd$p.value < 0.001, '<0.001', subSpd$p.value)
+  speed_Impr[s] <- ifelse(subSpd$statistic < 0, '-', '+')
+  speed_Sigf[s] <- ifelse(is.na(subSpd$p.value) || subSpd$p.value < 0.05, '*', '')
+  speed_df[s]   <- subSpd$parameter[[1]]
+  speed_stat[s] <- subSpd$statistic[[1]]
+  ratio_Pval[s] <- subRat$p.value #ifelse(subRat$p.value < 0.001, '<0.001', subRat$p.value)
+  ratio_Impr[s] <- ifelse(subRat$statistic < 0, '-', '+')
+  ratio_Sigf[s] <- ifelse(is.na(subRat$p.value) || subRat$p.value < 0.05, '*', '')
+  ratio_df[s]   <- subRat$parameter[[1]]
+  ratio_stat[s] <- subRat$statistic[[1]]
+}
+
+SubTraining <- data.frame(error_df=error_df, error_stat=error_stat, error_Pval=error_Pval, error_Sigf=error_Sigf,
+                          speed_df=speed_df, speed_stat=speed_stat, speed_Pval=speed_Pval, speed_Sigf=speed_Sigf,
+                          ratio_df=ratio_df, ratio_stat=ratio_stat, ratio_Pval=ratio_Pval, ratio_Sigf=ratio_Sigf)
+  
+rownames(SubTraining) <- c(unique(Reach$Label))
+kable(SubTraining, align='c', digits = c(2,2,3,0,2,2,3,0,2,2,3,0),
+      col.names = c('','Error (Int)','','','','Speed (Int)','','','','Ratio (Int)','',''),
+      caption= "Individual performance changes between baseline and final intrinsic Test. +: final < baseline; -: baseline < final; *: p-value < 0.05.") %>%
+  row_spec(0,bold=TRUE) %>%
+  column_spec (c(1,5,10),border_right =  T)
+
+
+error_Pval <- c(NA)
+error_Impr <- c('')
+error_Sigf <- c('')
+error_df   <- c(NA)
+error_stat <- c(NA)
+speed_Pval <- c(NA)
+speed_Impr <- c('')
+speed_Sigf <- c('')
+speed_df   <- c(NA)
+speed_stat <- c(NA)
+ratio_Pval <- c(NA)
+ratio_Impr <- c('')
+ratio_Sigf <- c('')
+ratio_df   <- c(NA)
+ratio_stat <- c(NA)
+
+for (s in 2:7) {
+  temp <- Train[which(Train$SubID == subNames[s] & 
+                        (Train$Block == "T_01" | Train$Block == "T_22")), ]
+  
+  d <- cohen.d(temp$Error[temp$Block == "T_01"], temp$Error[temp$Block == "T_22"], na.rm=TRUE)
+  error_diff[s,5] <- mean(temp$Error[temp$Block == "T_01"],na.rm=TRUE) - mean(temp$Error[temp$Block == "T_22"],na.rm=TRUE)
+  error_diff[s,6] <- d$estimate
+  error_diff[s,7] <- d$conf.int[[2]] - d$conf.int[[1]]
+  error_diff[s,8] <- (error_diff[s,7]/2)/error_diff[s,6]*100
+  
+  subErr <- t.test(Error ~ Block, data = temp)
+  subSpd <- t.test(Speed ~ Block, data = temp)
+  subRat <- t.test(Ratio ~ Block, data = temp)
+  
+  error_Pval[s] <- subErr$p.value #ifelse(subErr$p.value < 0.001, '<0.001', subErr$p.value)
+  error_Impr[s] <- ifelse(subErr$statistic < 0, '-', '+')
+  error_Sigf[s] <- ifelse(is.na(subErr$p.value) || subErr$p.value < 0.05, '*', '')
+  error_df[s]   <- subErr$parameter[[1]]
+  error_stat[s] <- subErr$statistic[[1]]
+  speed_Pval[s] <- subSpd$p.value #ifelse(subSpd$p.value < 0.001, '<0.001', subSpd$p.value)
+  speed_Impr[s] <- ifelse(subSpd$statistic < 0, '-', '+')
+  speed_Sigf[s] <- ifelse(is.na(subSpd$p.value) || subSpd$p.value < 0.05, '*', '')
+  speed_df[s]   <- subSpd$parameter[[1]]
+  speed_stat[s] <- subSpd$statistic[[1]]
+  ratio_Pval[s] <- subRat$p.value #ifelse(subRat$p.value < 0.001, '<0.001', subRat$p.value)
+  ratio_Impr[s] <- ifelse(subRat$statistic < 0, '-', '+')
+  ratio_Sigf[s] <- ifelse(is.na(subRat$p.value) || subRat$p.value < 0.05, '*', '')
+  ratio_df[s]   <- subRat$parameter[[1]]
+  ratio_stat[s] <- subRat$statistic[[1]]
+}
+
+SubTraining <- data.frame(error_df=error_df, error_stat=error_stat, error_Pval=error_Pval, error_Sigf=error_Sigf,
+                          speed_df=speed_df, speed_stat=speed_stat, speed_Pval=speed_Pval, speed_Sigf=speed_Sigf,
+                          ratio_df=ratio_df, ratio_stat=ratio_stat, ratio_Pval=ratio_Pval, ratio_Sigf=ratio_Sigf)
+  
+rownames(SubTraining) <- c(unique(Reach$Label))
+kable(SubTraining, align='c', digits = c(2,2,3,0,2,2,3,0,2,2,3,0),
+      col.names = c('','Error (Int)','','','','Speed (Int)','','','','Ratio (Int)','',''),
+      caption= "Individual performance changes between baseline and final VTF Test. +: final < baseline; -: baseline < final; *: p-value < 0.05.") %>%
+  row_spec(0,bold=TRUE) %>%
+  column_spec (c(1,5,10),border_right =  T)
+
+  
+Learn$Err_Signif <- c("Not Significant","Not Significant",  "Not Significant",  "Significant",      "Significant",      "Not Significant",  "Not Significant",
+                         "Not Significant","Not Significant",  "Significant",      "Significant",      "Significant",      "Not Significant",  "Significant",
+                         "Not Significant","Significant",      "Not Significant",  "Significant",      "Significant",      "Significant",      "Not Significant",
+                         "Not Significant","Significant",      "Significant",      "Significant",      "Significant",      "Significant",      "Significant",
+                         "Not Significant","Not Significant",  "Significant",      "Not Significant",  "Not Significant",  "Not Significant",  "Significant",
+                         "Not Significant","Not Significant",  "Significant",      "Not Significant",  "Not Significant",  "Not Significant",  "Significant",
+                         "Not Significant","Significant",      "Significant",      "Not Significant",  "Not Significant",  "Significant",      "Significant")
+
+```
+
+\newpage
+
+# Hypothesis 1
+
+Multi-session training without concurrent vision will lead to improved reaching accuracy and efficiency with 3-dimensional vibrotactile feedback for survivors of stroke
+
+## Target Capture Accuracy
+
+```{r accuracy_table}
+# t-tests for test days
+upper <- 100
+p1 <- upper*0.90
+p2 <- upper*0.75
+
+pw_bf <- Learn[which(Learn$SubID != "WS_001"),] %>%
+  pairwise_t_test(TrialError ~ Block, paired = TRUE) %>%
+  filter((group1=="N_01" & group2=="N_22") | (group1=="T_01" & group2=="T_22"))
+
+pw_tr <- Learn %>%
+  pairwise_t_test(TrialError ~ Block, paired = TRUE) %>%
+  filter((group1=="C_02" & group2=="C_21") | (group1=="N_22" & group2=="T_22"))
+
+pw_error <- data.frame(group1 = c(pw_bf$group1, pw_tr$group1),
+                   group2 = c(pw_bf$group2, pw_tr$group2),
+                   t_stat = c(pw_bf$statistic, pw_tr$statistic),
+                   df = c(pw_bf$df, pw_tr$df),
+                   p = paste0("p = ",format(round(c(pw_bf$p, pw_tr$p), digits=3), nsmall=3)),
+                   y.position = c(p2,p2,p1,p2),
+                   xmin = c(3,6,(4+2*dodge),9) - dodge,
+                   xmax = c(4,7,7,10) + dodge)
+
+
+
+# t-tests for training days
+SSdim <- Learn[ ,c(1,2,3,4,5,24,6,7,8)]
+lower <- -75
+upper <- 75
+p1 <- lower + (upper-lower)*0.9
+
+dimError <- melt(SSdim, id.vars = c(1,2,3,4,5,6), variable.name = "Dim", value.name = "Error")
+levels(dimError$Dim) <- c("x", "y", "z")
+dimError$DimPerType <- factor(paste(dimError$Dim, dimError$BlockType, sep="."))
+dimError$DimPerBlock <- factor(paste(dimError$Dim, dimError$Block, sep="."))
+
+pw_bf <- dimError[which(dimError$SubID != "WS_001"),] %>%
+  pairwise_t_test(Error ~ DimPerBlock, paired = TRUE) %>%
+  filter((group1=="x.N_01" & group2=="x.N_22") | (group1=="x.T_01" & group2=="x.T_22") |
+         (group1=="y.N_01" & group2=="y.N_22") | (group1=="y.T_01" & group2=="y.T_22") |
+         (group1=="z.N_01" & group2=="z.N_22") | (group1=="z.T_01" & group2=="z.T_22"))
+
+pw_tr <- dimError %>%
+  pairwise_t_test(Error ~ DimPerBlock, paired = TRUE) %>%
+  filter((group1=="x.C_02" & group2=="x.C_21") | (group1=="y.C_02" & group2=="y.C_21") | (group1=="z.C_02" & group2=="z.C_21")) #|  
+         #(group1=="x.N_22" & group2=="x.T_22") | (group1=="y.N_22" & group2=="y.T_22") | (group1=="z.N_22" & group2=="z.T_22"))
+
+pw_error_dim <- data.frame(group1 = c(pw_bf$group1, pw_tr$group1),
+                   group2 = c(pw_bf$group2, pw_tr$group2))
+pw_error_dim$dim <- sapply(strsplit(pw_error_dim$group1, ''), function(x) x[1])
+pw_error_dim$type <- sapply(strsplit(pw_error_dim$group1, ''), function(x) x[3])
+pw_error_dim$t_stat <- c(pw_bf$statistic, pw_tr$statistic)
+pw_error_dim$df <- c(pw_bf$df, pw_tr$df)
+pw_error_dim$p <- paste0("p = ",format(round(c(pw_bf$p, pw_tr$p), digits=3), nsmall=3))
+pw_error_dim <- pw_error_dim[with(pw_error_dim, order(type, dim)), ]
+pw_error_dim$y.position <- p1
+pw_error_dim$xmin <- c(9,9,9,3,3,3,6,6,6) - 0.2
+pw_error_dim$xmin[pw_error_dim$dim == "x"] <- pw_error_dim$xmin[pw_error_dim$dim == "x"] - dodge
+pw_error_dim$xmin[pw_error_dim$dim == "z"] <- pw_error_dim$xmin[pw_error_dim$dim == "z"] + dodge
+pw_error_dim$xmax <- c(10,10,10,4,4,4,7,7,7) + 0.2
+pw_error_dim$xmax[pw_error_dim$dim == "x"] <- pw_error_dim$xmax[pw_error_dim$dim == "x"] - dodge
+pw_error_dim$xmax[pw_error_dim$dim == "z"] <- pw_error_dim$xmax[pw_error_dim$dim == "z"] + dodge
+pw_error_dim$x <- rep(c(9.5,3.5,6.5), each=3)
+pw_error_dim$y <- rep(c(91,99,83), times=3)
+
+
+# stat table
+accuracy <- rbind(pw_error[,1:5],pw_error_dim[,c(1,2,5,6,7)])
+accuracy$signif <- ifelse(accuracy$p<0.05, '*', '')
+accuracy <- accuracy[with(accuracy, order(group1)), ]
+
+kable(accuracy, digits = c(0, 0, 2, 0, 3, 0), align='c', row.names = FALSE,
+      caption= "Cohort target capture error t-tests") %>%
+      row_spec(c(4,7,10), hline_after = T) %>%
+      column_spec(1:6,width = "0.55in") %>%
+      row_spec(0,bold=TRUE)
+```
+
+\newpage
+
+```{r SS_CohError, echo=FALSE}
+lower <- 0
+upper <- 100
+incr <- 20
+sessY <- upper*-0.09
+lowLineY <- upper*-0.16
+feedbkY <- upper*-0.23
+taskY <- upper*1.13
+highLineY <- upper*1.08
+p1 <- upper*0.90
+p2 <- upper*0.75
+
+AvgLearn  <- data_summary(Learn, varname="TrialError", groupnames=c("Session", "BlockType", "Block", "xPos"))
+
+
+# Create ggplot2 barplot
+error <- ggplot(AvgLearn, aes(x=xPos, y=mean)) + 
+      # Add lines for individuals
+      geom_line(data = Learn, aes(x=xPos, y=TrialError, color=BlockType, group=SubPerBlock), linewidth = 0.25, alpha = 0.4) +
+      # Add lines for average group
+      geom_line(aes(group=BlockType, color=BlockType), size = 0.65) +
+      # Add error bars
+      geom_errorbar(aes(ymin=mean-se, ymax=mean+se, color=BlockType), width=0, linewidth=0.75) +
+      # Add mean data point and manually change symbol depending on group
+      geom_point(aes(color=BlockType, fill=BlockType, shape=BlockType), size = 2.5) +
+      scale_y_continuous(name="error [%workspace]", breaks=seq(lower, upper, incr)) + 
+      scale_x_continuous(limits=c(0,11), expand = c(0, 0))
+
+error <- error + theme_RNM + theme(legend.position="none") + 
+      scale_shape_manual(name="Feedback Type", values=shapes) + 
+      scale_color_manual(name="Feedback Type",values=colors1) + 
+      scale_fill_manual(name="Feedback Type",values=colors1) +
+  
+      annotate("segment", x = 0.3, xend = 7.7, y = highLineY, yend = highLineY, linewidth = 0.3) +
+      annotate(geom="text", x = 3.5, y = taskY, label="TESTING", color="black", fontface="bold", size = f9) +
+      annotate("segment", x = 8.3, xend = 10.7, y = highLineY, yend = highLineY, linewidth = 0.3) +
+      annotate(geom="text", x = 9.5, y = taskY, label="TRAINING", color="black", fontface="bold", size = f9) +
+  
+      annotate(geom="text", x = 1, y = sessY, label="base", color="black", size = f9) +
+      annotate("segment", x = 0.6, xend = 1.4, y = lowLineY, yend = lowLineY, linewidth = 0.3) +
+      annotate(geom="text", x = 1, y = feedbkY, label="visual", color="black", fontface="bold", size = f9) +
+      annotate("segment", x = 2, xend = 2, y = lower, yend = upper, linewidth = 0.25, color="gray70") +
+  
+      annotate(geom="text", x = 3, y = sessY, label="base", color="black", size = f9) +
+      annotate(geom="text", x = 4, y = sessY, label="final", color="black", size = f9) +
+      annotate("segment", x = 2.6, xend = 4.4, y = lowLineY, yend = lowLineY, linewidth = 0.3) +
+      annotate(geom="text", x = 3.5, y = feedbkY, label="intrinsic", color="black", fontface="bold", size = f9) +
+      annotate("segment", x = 5, xend = 5, y = lower, yend = upper, linewidth = 0.25, color="gray70") +
+  
+      annotate(geom="text", x = 6, y = sessY, label="base", color="black", size = f9) +
+      annotate(geom="text", x = 7, y = sessY, label="final", color="black", size = f9) +
+      annotate("segment", x = 5.6, xend = 7.4, y = lowLineY, yend = lowLineY, linewidth = 0.3) +
+      annotate(geom="text", x = 6.5, y = feedbkY, label="vibrotactile", color="black", fontface="bold", size = f9) +
+      annotate("segment", x = 8, xend = 8, y = lower, yend = upper, linewidth = 0.25, color="gray70") +
+  
+      annotate(geom="text", x = 9, y = sessY, label="first", color="black", size = f9) +
+      annotate(geom="text", x = 10, y = sessY, label="last", color="black", size = f9) +
+      annotate("segment", x = 8.7, xend = 10.3, y = lowLineY, yend = lowLineY, linewidth = 0.3) +
+      annotate(geom="text", x = 9.5, y = feedbkY, label="vibrotactile", color="black", fontface="bold", size = f9) +
+  
+      guides(y=guide_axis_truncated(trunc_lower = lower, trunc_upper = upper)) +
+   stat_pvalue_manual(pw_error, tip.length = 0, hide.ns = FALSE, label = "p", size = f9, color = "black")
+```
+
+```{r SS_DimError, echo=FALSE}
+lower <- -75
+upper <- 75
+incr <- 25
+sessY <- lower + (upper-lower)*-0.09
+lowLineY <- lower + (upper-lower)*-0.16
+feedbkY <- lower + (upper-lower)*-0.23
+taskY <- lower + (upper-lower)*1.13
+highLineY <- lower + (upper-lower)*1.08
+p1 <- lower + (upper-lower)*0.9
+p1Lab <- p1 + (upper-lower)*0.05
+
+
+AvgDim <- data_summary(dimError, varname="Error", groupnames=c("Session", "Dim", "BlockType", "xPos", "DimPerType"))
+AvgDim$xPos[AvgDim$Dim=="x"] <- AvgDim$xPos[AvgDim$Dim=="x"] - dodge
+AvgDim$xPos[AvgDim$Dim=="z"] <- AvgDim$xPos[AvgDim$Dim=="z"] + dodge
+
+xLabs <- pw_error_dim[which(pw_error_dim$dim == "x"),]
+yLabs <- pw_error_dim[which(pw_error_dim$dim == "y"),]
+zLabs <- pw_error_dim[which(pw_error_dim$dim == "z"),]
+
+
+# Create ggplot2 barplot
+error_dim <- ggplot(AvgDim, aes(x = xPos, y = mean)) + 
+      geom_hline(yintercept=0, linewidth=0.5) +
+      # Add lines for average group
+      geom_line(aes(group=DimPerType, linetype=Dim, color=Dim), linewidth=0.65) +
+      # Add error bars
+      geom_errorbar(aes(ymin=mean-se, ymax=mean+se, color=Dim), width=0, linewidth=0.75) +
+      # Add mean data point and manually change symbol depending on group
+      geom_point(aes(shape=BlockType, color = Dim, fill=Dim), size=2.5) +
+      scale_y_continuous(name="error [%workspace]", breaks=seq(lower, upper, incr)) +
+      scale_x_continuous(limits=c(0,11), expand = c(0, 0))
+
+error_dim <- error_dim + theme_RNM + theme(legend.key.width = unit(1.6,"cm")) + 
+      scale_shape_manual(name="Movement Dimension", values=dimShapes, guide="none") +
+      scale_color_manual(name="Movement Dimension", values=colors2, guide="none") +
+      scale_linetype_manual(name="Movement Dimension", values=lines, 
+                            guide = guide_legend(override.aes = list(color=colors2))) +
+      scale_fill_manual(name="Movement Dimension", values=colors2) + 
+  
+      annotate("segment", x = 0.3, xend = 7.7, y = highLineY, yend = highLineY, linewidth = 0.3) +
+      annotate(geom="text", x = 3.5, y = taskY, label="TESTING", color="black", fontface="bold", size = f9) +
+      annotate("segment", x = 8.3, xend = 10.7, y = highLineY, yend = highLineY, linewidth = 0.3) +
+      annotate(geom="text", x = 9.5, y = taskY, label="TRAINING", color="black", fontface="bold", size = f9) +
+  
+      annotate(geom="text", x = zLabs$x, y = p1Lab, label="n.s.", color="black", size = f9) +
+      annotate("segment", x = pw_error_dim$x-0.7, xend = pw_error_dim$x+0.7, y = p1, yend = p1, linewidth = 0.25) +
+  
+      annotate(geom="text", x = 1, y = sessY, label="base", color="black", size = f9) +
+      annotate("segment", x = 0.6, xend = 1.4, y = lowLineY, yend = lowLineY, linewidth = 0.3) +
+      annotate(geom="text", x = 1, y = feedbkY, label="visual", color="black", fontface="bold", size = f9) +
+      annotate("segment", x = 2, xend = 2, y = lower, yend = upper, linewidth = 0.25, color="gray70") +
+  
+      annotate(geom="text", x = 3, y = sessY, label="base", color="black", size = f9) +
+      annotate(geom="text", x = 4, y = sessY, label="final", color="black", size = f9) +
+      annotate("segment", x = 2.6, xend = 4.4, y = lowLineY, yend = lowLineY, linewidth = 0.3) +
+      annotate(geom="text", x = 3.5, y = feedbkY, label="intrinsic", color="black", fontface="bold", size = f9) +
+      annotate("segment", x = 5, xend = 5, y = lower, yend = upper, linewidth = 0.25, color="gray70") +
+  
+      annotate(geom="text", x = 6, y = sessY, label="base", color="black", size = f9) +
+      annotate(geom="text", x = 7, y = sessY, label="final", color="black", size = f9) +
+      annotate("segment", x = 5.6, xend = 7.4, y = lowLineY, yend = lowLineY, linewidth = 0.3) +
+      annotate(geom="text", x = 6.5, y = feedbkY, label="vibrotactile", color="black", fontface="bold", size = f9) +
+      annotate("segment", x = 8, xend = 8, y = lower, yend = upper, linewidth = 0.25, color="gray70") +
+  
+      annotate(geom="text", x = 9, y = sessY, label="first", color="black", size = f9) +
+      annotate(geom="text", x = 10, y = sessY, label="last", color="black", size = f9) +
+      annotate("segment", x = 8.7, xend = 10.3, y = lowLineY, yend = lowLineY, linewidth = 0.3) +
+      annotate(geom="text", x = 9.5, y = feedbkY, label="vibrotactile", color="black", fontface="bold", size = f9) +
+  
+      guides(y=guide_axis_truncated(trunc_lower = lower, trunc_upper = upper),
+             fill = guide_legend("Movement Dimension", override.aes = list(shape = 21))) + 
+      expand_limits(y = c(upper*1.4)) 
+```
+
+```{r accuracy_plot, echo=FALSE, fig.height=4.3, fig.width=6, fig.cap="Cohort kinematic results for A) Euclidean target capture error with individual learning trends shown by faded lines and B) dimensional target capture error. Target capture error is percent workspace difference between the center of the target and the final hand position. The training sessions, marked by yellow lines, included after-squeeze visual and vibration feedback for correction. Testing sessions did not include after-squeeze corrections. Error bars: ±1 standard error of the mean."}
+
+ggarrange(error, NULL, error_dim, align="v", heights=c(3,0.1,3.2),
+          nrow = 3, labels = c("A","","B"))
+
+```
+
+\newpage
+
+## Target Capture Efficiency
+
+```{r speed_table}
+# t-tests for test days
+upper <- 60
+p1 <- upper*0.90
+p2 <- upper*0.75
+
+pw_bf <- Learn[which(Learn$SubID != "WS_001"),] %>%
+  pairwise_t_test(TrialSpeed ~ Block, paired = TRUE) %>%
+  filter((group1=="N_01" & group2=="N_22") | (group1=="T_01" & group2=="T_22"))
+
+pw_tr <- Learn %>%
+  pairwise_t_test(TrialSpeed ~ Block, paired = TRUE) %>%
+  filter((group1=="C_02" & group2=="C_21") | (group1=="N_22" & group2=="T_22"))
+
+pw_speed <- data.frame(group1 = c(pw_bf$group1, pw_tr$group1),
+                   group2 = c(pw_bf$group2, pw_tr$group2),
+                   t_stat = c(pw_bf$statistic, pw_tr$statistic),
+                   df = c(pw_bf$df, pw_tr$df),
+                   p = paste0("p = ",format(round(c(pw_bf$p, pw_tr$p), digits=3), nsmall=3)),
+                   y.position = c(p2,p2,p1,p2),
+                   xmin = c(3,6,(4+2*dodge),9) - dodge,
+                   xmax = c(4,7,7,10) + dodge)
+
+
+
+# t-tests for training days
+upper <- 20
+p1 <- upper*0.9
+
+SSdim <- Learn[ ,c(1,2,3,4,5,24,10,11,12)]
+dimSpeed <- melt(SSdim, id.vars = c(1,2,3,4,5,6), variable.name = "Dim", value.name = "Speed")
+levels(dimSpeed$Dim) <- c("x", "y", "z")
+dimSpeed$DimPerType <- factor(paste(dimSpeed$Dim, dimSpeed$BlockType, sep="."))
+dimSpeed$DimPerBlock <- factor(paste(dimSpeed$Dim, dimSpeed$Block, sep="."))
+
+pw_bf <- dimSpeed[which(dimSpeed$SubID != "WS_001"),] %>%
+  pairwise_t_test(Speed ~ DimPerBlock, paired = TRUE) %>%
+  filter((group1=="x.N_01" & group2=="x.N_22") | (group1=="x.T_01" & group2=="x.T_22") |
+         (group1=="y.N_01" & group2=="y.N_22") | (group1=="y.T_01" & group2=="y.T_22") |
+         (group1=="z.N_01" & group2=="z.N_22") | (group1=="z.T_01" & group2=="z.T_22"))
+
+pw_tr <- dimSpeed %>%
+  pairwise_t_test(Speed ~ DimPerBlock, paired = TRUE) %>%
+  filter((group1=="x.C_02" & group2=="x.C_21") | (group1=="y.C_02" & group2=="y.C_21") | (group1=="z.C_02" & group2=="z.C_21")) 
+
+pw_speed_dim <- data.frame(group1 = c(pw_bf$group1, pw_tr$group1),
+                   group2 = c(pw_bf$group2, pw_tr$group2))
+pw_speed_dim$dim <- sapply(strsplit(pw_speed_dim$group1, ''), function(x) x[1])
+pw_speed_dim$type <- sapply(strsplit(pw_speed_dim$group1, ''), function(x) x[3])
+pw_speed_dim$t_stat <- c(pw_bf$statistic, pw_tr$statistic)
+pw_speed_dim$df <- c(pw_bf$df, pw_tr$df)
+pw_speed_dim$p <- paste0("p = ",format(round(c(pw_bf$p, pw_tr$p), digits=3), nsmall=3))
+pw_speed_dim <- pw_speed_dim[with(pw_speed_dim, order(type, dim)), ]
+pw_speed_dim$y.position <- p1
+pw_speed_dim$xmin <- c(9,9,9,3,3,3,6,6,6) - 0.2
+pw_speed_dim$xmin[pw_speed_dim$dim == "x"] <- pw_speed_dim$xmin[pw_speed_dim$dim == "x"] - dodge
+pw_speed_dim$xmin[pw_speed_dim$dim == "z"] <- pw_speed_dim$xmin[pw_speed_dim$dim == "z"] + dodge
+pw_speed_dim$xmax <- c(10,10,10,4,4,4,7,7,7) + 0.2
+pw_speed_dim$xmax[pw_speed_dim$dim == "x"] <- pw_speed_dim$xmax[pw_speed_dim$dim == "x"] - dodge
+pw_speed_dim$xmax[pw_speed_dim$dim == "z"] <- pw_speed_dim$xmax[pw_speed_dim$dim == "z"] + dodge
+pw_speed_dim$x <- rep(c(9.5,3.5,6.5), each=3)
+pw_speed_dim$y <- rep(c(112,120,104), times=3)
+
+
+
+# stat table
+speed <- rbind(pw_speed[,1:5],pw_speed_dim[,c(1,2,5,6,7)])
+speed$signif <- ifelse(speed$p<0.05, '*', '')
+speed <- speed[with(speed, order(group1)), ]
+
+kable(speed, digits = c(0, 0, 2, 0, 3, 0), align='c', row.names = FALSE,
+      caption= "Cohort target capture speed t-tests") %>%
+      row_spec(c(4,7,10), hline_after = T) %>%
+      column_spec(1:6,width = "0.55in") %>%
+      row_spec(0,bold=TRUE)
+```
+
+```{r ratio_table}
+# t-tests for train days
+upper <- 45
+p1 <- upper*0.90
+p2 <- upper*0.75
+
+pw_bf <- Learn[which(Learn$SubID != "WS_001"),] %>%
+  pairwise_t_test(TrialRatio ~ Block, paired = TRUE) %>%
+  filter((group1=="N_01" & group2=="N_22") | (group1=="T_01" & group2=="T_22"))
+
+pw_tr <- Learn %>%
+  pairwise_t_test(TrialRatio ~ Block, paired = TRUE) %>%
+  filter((group1=="C_02" & group2=="C_21") | (group1=="N_22" & group2=="T_22"))
+
+pw_ratio <- data.frame(group1 = c(pw_bf$group1, pw_tr$group1),
+                   group2 = c(pw_bf$group2, pw_tr$group2),
+                   t_stat = c(pw_bf$statistic, pw_tr$statistic),
+                   df = c(pw_bf$df, pw_tr$df),
+                   p = paste0("p = ",format(round(c(pw_bf$p, pw_tr$p), digits=3), nsmall=3)),
+                   y.position = c(p2,p2,p1,p2),
+                   xmin = c(3,6,(4+2*dodge),9) - dodge,
+                   xmax = c(4,7,7,10) + dodge)
+
+
+
+# t-tests for training days
+upper <- 200
+p1 <- upper*0.8
+
+SSdim <- Learn[ ,c(1,2,3,4,5,24,14,15,16)]
+dimRatio <- melt(SSdim, id.vars = c(1,2,3,4,5,6), variable.name = "Dim", value.name = "Ratio")
+levels(dimRatio$Dim) <- c("x", "y", "z")
+dimRatio$DimPerType <- factor(paste(dimRatio$Dim, dimRatio$BlockType, sep="."))
+dimRatio$DimPerBlock <- factor(paste(dimRatio$Dim, dimRatio$Block, sep="."))
+
+pw_bf <- dimRatio[which(dimRatio$SubID != "WS_001"),] %>%
+  pairwise_t_test(Ratio ~ DimPerBlock, paired = TRUE) %>%
+  filter((group1=="x.N_01" & group2=="x.N_22") | (group1=="x.T_01" & group2=="x.T_22") |
+         (group1=="y.N_01" & group2=="y.N_22") | (group1=="y.T_01" & group2=="y.T_22") |
+         (group1=="z.N_01" & group2=="z.N_22") | (group1=="z.T_01" & group2=="z.T_22"))
+
+pw_tr <- dimRatio %>%
+  pairwise_t_test(Ratio ~ DimPerBlock, paired = TRUE) %>%
+  filter((group1=="x.C_02" & group2=="x.C_21") | (group1=="y.C_02" & group2=="y.C_21") | (group1=="z.C_02" & group2=="z.C_21")) #|  
+         #(group1=="x.N_22" & group2=="x.T_22") | (group1=="y.N_22" & group2=="y.T_22") | (group1=="z.N_22" & group2=="z.T_22"))
+
+pw_ratio_dim <- data.frame(group1 = c(pw_bf$group1, pw_tr$group1),
+                   group2 = c(pw_bf$group2, pw_tr$group2))
+pw_ratio_dim$dim <- sapply(strsplit(pw_ratio_dim$group1, ''), function(x) x[1])
+pw_ratio_dim$type <- sapply(strsplit(pw_ratio_dim$group1, ''), function(x) x[3])
+pw_ratio_dim$t_stat <- c(pw_bf$statistic, pw_tr$statistic)
+pw_ratio_dim$df <- c(pw_bf$df, pw_tr$df)
+pw_ratio_dim$p <- paste0("p = ",format(round(c(pw_bf$p, pw_tr$p), digits=3), nsmall=3))
+pw_ratio_dim <- pw_ratio_dim[with(pw_ratio_dim, order(type, dim)), ]
+pw_ratio_dim$y.position <- p1
+pw_ratio_dim$xmin <- c(9,9,9,3,3,3,6,6,6) - 0.2
+pw_ratio_dim$xmin[pw_ratio_dim$dim == "x"] <- pw_ratio_dim$xmin[pw_ratio_dim$dim == "x"] - dodge
+pw_ratio_dim$xmin[pw_ratio_dim$dim == "z"] <- pw_ratio_dim$xmin[pw_ratio_dim$dim == "z"] + dodge
+pw_ratio_dim$xmax <- c(10,10,10,4,4,4,7,7,7) + 0.2
+pw_ratio_dim$xmax[pw_ratio_dim$dim == "x"] <- pw_ratio_dim$xmax[pw_ratio_dim$dim == "x"] - dodge
+pw_ratio_dim$xmax[pw_ratio_dim$dim == "z"] <- pw_ratio_dim$xmax[pw_ratio_dim$dim == "z"] + dodge
+pw_ratio_dim$x <- rep(c(9.5,3.5,6.5), each=3)
+pw_ratio_dim$y <- rep(c(150,162,138), times=3)
+
+
+
+# stat table
+ratio <- rbind(pw_ratio[,1:5],pw_ratio_dim[,c(1,2,5,6,7)])
+ratio$signif <- ifelse(ratio$p<0.05, '*', '')
+ratio <- ratio[with(ratio, order(group1)), ]
+
+kable(ratio, digits = c(0, 0, 2, 0, 3, 0), align='c', row.names = FALSE,
+      caption= "Cohort target capture path ratio t-tests") %>%
+      row_spec(c(4,7,10), hline_after = T) %>%
+      column_spec(1:6,width = "0.55in") %>%
+      row_spec(0,bold=TRUE)
+```
+
+\newpage
+
+```{r SS_CohSpeed, echo=FALSE}
+lower <- 0
+upper <- 60
+incr <- 10
+sessY <- upper*-0.09
+lowLineY <- upper*-0.16
+feedbkY <- upper*-0.23
+taskY <- upper*1.13
+highLineY <- upper*1.08
+p1 <- upper*0.90
+p2 <- upper*0.75
+
+
+AvgLearn  <- data_summary(Learn, varname="TrialSpeed", groupnames=c("Session", "BlockType", "Block", "xPos"))
+
+
+# Create ggplot2 barplot
+speed <- ggplot(AvgLearn, aes(x=xPos, y=mean)) + 
+      # Add lines for individuals
+      geom_line(data = Learn, aes(x=xPos, y=TrialSpeed, color=BlockType, group=SubPerBlock), linewidth = 0.25, alpha = 0.4) +
+      # Add lines for average group
+      geom_line(aes(group=BlockType, color=BlockType), size = 0.65) +
+      # Add error bars
+      geom_errorbar(aes(ymin=mean-se, ymax=mean+se, color=BlockType), width=0, linewidth=0.75) +
+      # Add mean data point and manually change symbol depending on group
+      geom_point(aes(color=BlockType, fill=BlockType, shape=BlockType), size = 2.5) +
+      scale_y_continuous(name="speed [cm/s]", breaks=seq(lower, upper, incr)) + 
+      scale_x_continuous(limits=c(0,11), expand = c(0, 0)) 
+
+speed <- speed + theme_RNM + theme(legend.position="none") + 
+      scale_shape_manual(name="Feedback Type", values=shapes) + 
+      scale_color_manual(name="Feedback Type",values=colors1) + 
+      scale_fill_manual(name="Feedback Type",values=colors1) +
+  
+      annotate("segment", x = 0.3, xend = 7.7, y = highLineY, yend = highLineY, linewidth = 0.3) +
+      annotate(geom="text", x = 3.5, y = taskY, label="TESTING", color="black", fontface="bold", size = f9) +
+      annotate("segment", x = 8.3, xend = 10.7, y = highLineY, yend = highLineY, linewidth = 0.3) +
+      annotate(geom="text", x = 9.5, y = taskY, label="TRAINING", color="black", fontface="bold", size = f9) +
+  
+      annotate(geom="text", x = 1, y = sessY, label="base", color="black", size = f9) +
+      annotate("segment", x = 0.6, xend = 1.4, y = lowLineY, yend = lowLineY, linewidth = 0.3) +
+      annotate(geom="text", x = 1, y = feedbkY, label="visual", color="black", fontface="bold", size = f9) +
+      annotate("segment", x = 2, xend = 2, y = lower, yend = upper, linewidth = 0.25, color="gray70") +
+  
+      annotate(geom="text", x = 3, y = sessY, label="base", color="black", size = f9) +
+      annotate(geom="text", x = 4, y = sessY, label="final", color="black", size = f9) +
+      annotate("segment", x = 2.6, xend = 4.4, y = lowLineY, yend = lowLineY, linewidth = 0.3) +
+      annotate(geom="text", x = 3.5, y = feedbkY, label="intrinsic", color="black", fontface="bold", size = f9) +
+      annotate("segment", x = 5, xend = 5, y = lower, yend = upper, linewidth = 0.25, color="gray70") +
+  
+      annotate(geom="text", x = 6, y = sessY, label="base", color="black", size = f9) +
+      annotate(geom="text", x = 7, y = sessY, label="final", color="black", size = f9) +
+      annotate("segment", x = 5.6, xend = 7.4, y = lowLineY, yend = lowLineY, linewidth = 0.3) +
+      annotate(geom="text", x = 6.5, y = feedbkY, label="vibrotactile", color="black", fontface="bold", size = f9) +
+      annotate("segment", x = 8, xend = 8, y = lower, yend = upper, linewidth = 0.25, color="gray70") +
+  
+      annotate(geom="text", x = 9, y = sessY, label="first", color="black", size = f9) +
+      annotate(geom="text", x = 10, y = sessY, label="last", color="black", size = f9) +
+      annotate("segment", x = 8.7, xend = 10.3, y = lowLineY, yend = lowLineY, linewidth = 0.3) +
+      annotate(geom="text", x = 9.5, y = feedbkY, label="vibrotactile", color="black", fontface="bold", size = f9) +
+  
+      guides(y=guide_axis_truncated(trunc_lower = lower, trunc_upper = upper)) +
+   stat_pvalue_manual(pw_speed, tip.length = 0, hide.ns = FALSE, label = "p", size = f9, color = "black")
+```
+
+```{r SS_DimSpeed, echo=FALSE}
+upper <- 20
+incr <- 5
+sessY <- upper*-0.09
+lowLineY <- upper*-0.16
+feedbkY <- upper*-0.23
+taskY <- upper*1.13
+highLineY <- upper*1.08
+p1 <- upper*0.9
+p1Lab <- p1 + (upper-lower)*0.06
+
+
+AvgDim <- data_summary(dimSpeed, varname="Speed", groupnames=c("Session", "Dim", "BlockType", "xPos", "DimPerType"))
+AvgDim$xPos[AvgDim$Dim=="x"] <- AvgDim$xPos[AvgDim$Dim=="x"] - dodge
+AvgDim$xPos[AvgDim$Dim=="z"] <- AvgDim$xPos[AvgDim$Dim=="z"] + dodge
+
+xLabs <- pw_speed_dim[which(pw_speed_dim$dim == "x"),]
+yLabs <- pw_speed_dim[which(pw_speed_dim$dim == "y"),]
+zLabs <- pw_speed_dim[which(pw_speed_dim$dim == "z"),]
+
+
+# Create ggplot2 barplot
+speed_dim <- ggplot(AvgDim, aes(x = xPos, y = mean)) + 
+      # Add lines for average group
+      geom_line(aes(group=DimPerType, linetype=Dim, color=Dim), linewidth=0.65) +
+      # Add error bars
+      geom_errorbar(aes(ymin=mean-se, ymax=mean+se, color=Dim), width=0, linewidth=0.75) +
+      # Add mean data point and manually change symbol depending on group
+      geom_point(aes(shape=BlockType, color=Dim, fill=Dim), size=2.5) +
+      scale_y_continuous(name="speed [cm/s]", breaks=seq(lower, upper, incr)) +
+      scale_x_continuous(limits=c(0,11), expand = c(0, 0))
+
+speed_dim <- speed_dim + theme_RNM + theme(legend.key.width = unit(1.6,"cm")) + 
+      scale_shape_manual(name="Movement Dimension", values=dimShapes, guide="none") +
+      scale_color_manual(name="Movement Dimension", values=colors2, guide="none") +
+      scale_linetype_manual(name="Movement Dimension", values=lines, 
+                            guide = guide_legend(override.aes = list(color="black"))) +
+      scale_fill_manual(name="Movement Dimension", values=colors2) + 
+  
+      annotate("segment", x = 0.3, xend = 7.7, y = highLineY, yend = highLineY, linewidth = 0.3) +
+      annotate(geom="text", x = 3.5, y = taskY, label="TESTING", color="black", fontface="bold", size = f9) +
+      annotate("segment", x = 8.3, xend = 10.7, y = highLineY, yend = highLineY, linewidth = 0.3) +
+      annotate(geom="text", x = 9.5, y = taskY, label="TRAINING", color="black", fontface="bold", size = f9) +
+  
+      annotate(geom="text", x = yLabs$x[1], y = p1Lab, label=yLabs$p[1], color="#FF8000", size = f9) +
+      annotate(geom="text", x = yLabs$x[2], y = p1Lab, label="n.s.", color="black", size = f9) +
+      annotate(geom="text", x = yLabs$x[3], y = p1Lab, label="n.s.", color="black", size = f9) +
+      annotate("segment", x = pw_ratio_dim$x-0.7, xend = pw_ratio_dim$x+0.7, y = p1, yend = p1, linewidth = 0.25) +
+  
+      annotate(geom="text", x = 1, y = sessY, label="base", color="black", size = f9) +
+      annotate("segment", x = 0.6, xend = 1.4, y = lowLineY, yend = lowLineY, linewidth = 0.3) +
+      annotate(geom="text", x = 1, y = feedbkY, label="visual", color="black", fontface="bold", size = f9) +
+      annotate("segment", x = 2, xend = 2, y = lower, yend = upper, linewidth = 0.25, color="gray70") +
+  
+      annotate(geom="text", x = 3, y = sessY, label="base", color="black", size = f9) +
+      annotate(geom="text", x = 4, y = sessY, label="final", color="black", size = f9) +
+      annotate("segment", x = 2.6, xend = 4.4, y = lowLineY, yend = lowLineY, linewidth = 0.3) +
+      annotate(geom="text", x = 3.5, y = feedbkY, label="intrinsic", color="black", fontface="bold", size = f9) +
+      annotate("segment", x = 5, xend = 5, y = lower, yend = upper, linewidth = 0.25, color="gray70") +
+  
+      annotate(geom="text", x = 6, y = sessY, label="base", color="black", size = f9) +
+      annotate(geom="text", x = 7, y = sessY, label="final", color="black", size = f9) +
+      annotate("segment", x = 5.6, xend = 7.4, y = lowLineY, yend = lowLineY, linewidth = 0.3) +
+      annotate(geom="text", x = 6.5, y = feedbkY, label="vibrotactile", color="black", fontface="bold", size = f9) +
+      annotate("segment", x = 8, xend = 8, y = lower, yend = upper, linewidth = 0.25, color="gray70") +
+  
+      annotate(geom="text", x = 9, y = sessY, label="first", color="black", size = f9) +
+      annotate(geom="text", x = 10, y = sessY, label="last", color="black", size = f9) +
+      annotate("segment", x = 8.7, xend = 10.3, y = lowLineY, yend = lowLineY, linewidth = 0.3) +
+      annotate(geom="text", x = 9.5, y = feedbkY, label="vibrotactile", color="black", fontface="bold", size = f9) +
+  
+      guides(y=guide_axis_truncated(trunc_lower = lower, trunc_upper = upper),
+             fill = guide_legend("Movement Dimension", override.aes = list(shape = 21))) + 
+      expand_limits(y = c(upper*1.4)) 
+```
+
+```{r SS_CohRatio_, echo=FALSE}
+lower <- 0
+upper <- 45
+incr <- 15
+sessY <- upper*-0.09
+lowLineY <- upper*-0.16
+feedbkY <- upper*-0.23
+taskY <- upper*1.13
+highLineY <- upper*1.08
+p1 <- upper*0.90
+p2 <- upper*0.75
+
+
+AvgLearn  <- data_summary(Learn, varname="TrialRatio", groupnames=c("Session", "BlockType", "Block", "xPos"))
+
+
+# Create ggplot2 barplot
+ratio <- ggplot(AvgLearn, aes(x=xPos, y=mean)) + 
+      # Add lines for individuals
+      geom_line(data = Learn, aes(x=xPos, y=TrialRatio, color=BlockType, group=SubPerBlock), linewidth = 0.25, alpha = 0.4) +
+      # Add lines for average group
+      geom_line(aes(group=BlockType, color=BlockType), size = 0.65) +
+      # Add error bars
+      geom_errorbar(aes(ymin=mean-se, ymax=mean+se, color=BlockType), width=0, linewidth=0.75) +
+      # Add mean data point and manually change symbol depending on group
+      geom_point(aes(color=BlockType, fill=BlockType, shape=BlockType), size = 2.5) +
+      scale_y_continuous(name="path length ratio", breaks=seq(lower, upper, incr), 
+        labels = c(1,15,30,45)) + 
+      scale_x_continuous(limits=c(0,11), expand = c(0, 0))
+
+ratio <- ratio + theme_RNM + theme(legend.position="none") + 
+      scale_shape_manual(name="Feedback Type", values=shapes) + 
+      scale_color_manual(name="Feedback Type",values=colors1) + 
+      scale_fill_manual(name="Feedback Type",values=colors1) +
+  
+      annotate("segment", x = 0.3, xend = 7.7, y = highLineY, yend = highLineY, linewidth = 0.3) +
+      annotate(geom="text", x = 3.5, y = taskY, label="TESTING", color="black", fontface="bold", size = f9) +
+      annotate("segment", x = 8.3, xend = 10.7, y = highLineY, yend = highLineY, linewidth = 0.3) +
+      annotate(geom="text", x = 9.5, y = taskY, label="TRAINING", color="black", fontface="bold", size = f9) +
+  
+      annotate(geom="text", x = 1, y = sessY, label="base", color="black", size = f9) +
+      annotate("segment", x = 0.6, xend = 1.4, y = lowLineY, yend = lowLineY, linewidth = 0.3) +
+      annotate(geom="text", x = 1, y = feedbkY, label="visual", color="black", fontface="bold", size = f9)+
+      annotate("segment", x = 2, xend = 2, y = lower, yend = upper, linewidth = 0.25, color="gray70") +
+  
+      annotate(geom="text", x = 3, y = sessY, label="base", color="black", size = f9) +
+      annotate(geom="text", x = 4, y = sessY, label="final", color="black", size = f9) +
+      annotate("segment", x = 2.6, xend = 4.4, y = lowLineY, yend = lowLineY, linewidth = 0.3) +
+      annotate(geom="text", x = 3.5, y = feedbkY, label="intrinsic", color="black", fontface="bold", size = f9) +
+      annotate("segment", x = 5, xend = 5, y = lower, yend = upper, linewidth = 0.25, color="gray70") +
+  
+      annotate(geom="text", x = 6, y = sessY, label="base", color="black", size = f9) +
+      annotate(geom="text", x = 7, y = sessY, label="final", color="black", size = f9) +
+      annotate("segment", x = 5.6, xend = 7.4, y = lowLineY, yend = lowLineY, linewidth = 0.3) +
+      annotate(geom="text", x = 6.5, y = feedbkY, label="vibrotactile", color="black", fontface="bold", size = f9) +
+      annotate("segment", x = 8, xend = 8, y = lower, yend = upper, linewidth = 0.25, color="gray70") +
+  
+      annotate(geom="text", x = 9, y = sessY, label="first", color="black", size = f9) +
+      annotate(geom="text", x = 10, y = sessY, label="last", color="black", size = f9) +
+      annotate("segment", x = 8.7, xend = 10.3, y = lowLineY, yend = lowLineY, linewidth = 0.3) +
+      annotate(geom="text", x = 9.5, y = feedbkY, label="vibrotactile", color="black", fontface="bold", size = f9) +
+  
+      guides(y=guide_axis_truncated(trunc_lower = lower, trunc_upper = upper)) +
+   stat_pvalue_manual(pw_ratio, tip.length = 0, hide.ns = FALSE, label = "p", size = f9, color = "black")
+```
+
+```{r SS_DimRatio, echo=FALSE}
+lower <- 0
+upper <- 200
+incr <- 50
+sessY <- upper*-0.09
+lowLineY <- upper*-0.16
+feedbkY <- upper*-0.23
+taskY <- upper*1.13
+highLineY <- upper*1.08
+p1 <- upper*0.90
+p1Lab <- p1 + (upper-lower)*0.06
+
+
+AvgDim <- data_summary(dimRatio, varname="Ratio", groupnames=c("Session", "Dim", "BlockType", "xPos", "DimPerType"))
+AvgDim$xPos[AvgDim$Dim=="x"] <- AvgDim$xPos[AvgDim$Dim=="x"] - dodge
+AvgDim$xPos[AvgDim$Dim=="z"] <- AvgDim$xPos[AvgDim$Dim=="z"] + dodge
+
+xLabs <- pw_ratio_dim[which(pw_ratio_dim$dim == "x"),]
+yLabs <- pw_ratio_dim[which(pw_ratio_dim$dim == "y"),]
+zLabs <- pw_ratio_dim[which(pw_ratio_dim$dim == "z"),]
+
+
+# Create ggplot2 barplot
+ratio_dim <- ggplot(AvgDim, aes(x = xPos, y = mean)) + 
+      # Add lines for average group
+      geom_line(aes(group=DimPerType, linetype=Dim, color=Dim), linewidth=0.65) +
+      # Add error bars
+      geom_errorbar(aes(ymin=mean-se, ymax=mean+se, color=Dim), width=0, linewidth=0.75) +
+      # Add mean data point and manually change symbol depending on group
+      geom_point(aes(shape=BlockType, color=Dim, fill=Dim), size=2.5) +
+      scale_y_continuous(name="path length ratio", breaks=seq(lower, upper, incr), 
+        labels=c(1,50,100,150,200)) + 
+      scale_x_continuous(limits=c(0,11), expand = c(0, 0))
+
+ratio_dim <- ratio_dim + theme_RNM + theme(legend.key.width = unit(1.6,"cm")) + 
+      scale_shape_manual(name="Movement Dimension", values=dimShapes, guide="none") +
+      scale_color_manual(name="Movement Dimension", values=colors2, guide="none") +
+      scale_linetype_manual(name="Movement Dimension", values=lines, 
+                            guide = guide_legend(override.aes = list(color="black"))) +
+      scale_fill_manual(name="Movement Dimension", values=colors2) + 
+  
+      annotate("segment", x = 0.3, xend = 7.7, y = highLineY, yend = highLineY, linewidth = 0.3) +
+      annotate(geom="text", x = 3.5, y = taskY, label="TESTING", color="black", fontface="bold", size = f9) +
+      annotate("segment", x = 8.3, xend = 10.7, y = highLineY, yend = highLineY, linewidth = 0.3) +
+      annotate(geom="text", x = 9.5, y = taskY, label="TRAINING", color="black", fontface="bold", size = f9) +
+  
+      
+      annotate(geom="text", x = xLabs$x[1], y = p1Lab, label="n.s.", color="black", size = f9) +
+      annotate(geom="text", x = xLabs$x[2], y = p1Lab, label=zLabs$p[2], color="#9B00FF", size = f9) +
+      annotate(geom="text", x = xLabs$x[3], y = p1Lab, label="n.s.", color="black", size = f9) +
+      annotate("segment", x = pw_error_dim$x-0.7, xend = pw_error_dim$x+0.7, y = p1, yend = p1, linewidth = 0.25) +
+  
+      annotate(geom="text", x = 1, y = sessY, label="base", color="black", size = f9) +
+      annotate("segment", x = 0.6, xend = 1.4, y = lowLineY, yend = lowLineY, linewidth = 0.3) +
+      annotate(geom="text", x = 1, y = feedbkY, label="visual", color="black", fontface="bold", size = f9) +
+      annotate("segment", x = 2, xend = 2, y = lower, yend = upper, linewidth = 0.25, color="gray70") +
+  
+      annotate(geom="text", x = 3, y = sessY, label="base", color="black", size = f9) +
+      annotate(geom="text", x = 4, y = sessY, label="final", color="black", size = f9) +
+      annotate("segment", x = 2.6, xend = 4.4, y = lowLineY, yend = lowLineY, linewidth = 0.3) +
+      annotate(geom="text", x = 3.5, y = feedbkY, label="intrinsic", color="black", fontface="bold", size = f9) +
+      annotate("segment", x = 5, xend = 5, y = lower, yend = upper, linewidth = 0.25, color="gray70") +
+  
+      annotate(geom="text", x = 6, y = sessY, label="base", color="black", size = f9) +
+      annotate(geom="text", x = 7, y = sessY, label="final", color="black", size = f9) +
+      annotate("segment", x = 5.6, xend = 7.4, y = lowLineY, yend = lowLineY, linewidth = 0.3) +
+      annotate(geom="text", x = 6.5, y = feedbkY, label="vibrotactile", color="black", fontface="bold", size = f9) +
+      annotate("segment", x = 8, xend = 8, y = lower, yend = upper, linewidth = 0.25, color="gray70") +
+  
+      annotate(geom="text", x = 9, y = sessY, label="first", color="black", size = f9) +
+      annotate(geom="text", x = 10, y = sessY, label="last", color="black", size = f9) +
+      annotate("segment", x = 8.7, xend = 10.3, y = lowLineY, yend = lowLineY, linewidth = 0.3) +
+      annotate(geom="text", x = 9.5, y = feedbkY, label="vibrotactile", color="black", fontface="bold", size = f9) +
+  
+      guides(y=guide_axis_truncated(trunc_lower = lower, trunc_upper = upper),
+             fill = guide_legend("Movement Dimension", override.aes = list(shape = 21))) + 
+      expand_limits(y = c(upper*1.25)) 
+```
+
+```{r efficiency_plot, echo=FALSE, fig.height=8.6, fig.width=6, fig.cap="Cohort kinematic results for A) Euclidean target capture speed with individual learning trends shown by faded lines, B) dimensional target capture speed, C) total path length ratio, and D) dimensional path length ratio. Target capture speed is the distance traversed divided by time elapsed from “GO” cue to squeeze. Path length ratio is the actual distance traversed divided by the optimal distance from start position to the target. The training sessions, marked by yellow lines, included after-squeeze visual and vibration feedback for correction. Testing sessions did not include after-squeeze corrections. Error bars: ±1 standard error of the mean."}
+
+ggarrange(speed, NULL, speed_dim, NULL, ratio, NULL, ratio_dim, align="v", heights=c(3,0.1,3.2,0.1,3.0,0.1,3.2),
+          nrow = 7, labels = c("A","","B","","C","","D"))
+
+```
+
+\newpage
+
+## Individuals with Deficits
+
+```{r SS_IndError, echo=FALSE}
+lower <- 0
+upper <- 75
+incr <- 25
+sessY <- upper*-0.09
+lowLineY <- upper*-0.16
+feedbkY <- upper*-0.23
+taskY <- upper*1.13
+highLineY <- upper*1.08
+
+# Create ggplot2 barplot
+error_ind <- ggplot(SubError, aes(x = xPos, y = mean)) + 
+      # Add lines for individuals
+      geom_line(aes(group=SubPerBlock, linetype=Deficit, color=Label), linewidth=0.65) +
+      # Add error bars
+      geom_errorbar(aes(ymin=mean-se, ymax=mean+se, color=Label), width=0, linewidth=0.75) +
+      # Add points
+      geom_point(aes(fill=Label), size=2.5, shape=21, color="black") +
+      scale_y_continuous(name="error [%workspace]", breaks=seq(lower, upper, incr)) +
+      scale_x_continuous(limits=c(0,11), expand = c(0, 0))
+
+error_ind <- error_ind + theme_RNM + theme(legend.position="top") + 
+      scale_color_manual(name="Participant",values=lines3, guide="none") + 
+      scale_fill_manual(name="Participant", values=colors3) + 
+      scale_linetype_manual(name="Deficit",values=c("12","33")) + 
+  
+      annotate("segment", x = 0.3, xend = 7.7, y = highLineY, yend = highLineY, linewidth = 0.3) +
+      annotate(geom="text", x = 3.5, y = taskY, label="TESTING", color="black", fontface="bold", size = f9) +
+      annotate("segment", x = 8.3, xend = 10.7, y = highLineY, yend = highLineY, linewidth = 0.3) +
+      annotate(geom="text", x = 9.5, y = taskY, label="TRAINING", color="black", fontface="bold", size = f9) +
+  
+      annotate(geom="text", x = 1, y = sessY, label="base", color="black", size = f9) +
+      annotate("segment", x = 0.6, xend = 1.4, y = lowLineY, yend = lowLineY, linewidth = 0.3) +
+      annotate(geom="text", x = 1, y = feedbkY, label="visual", color="black", fontface="bold", size = f9) +
+      annotate("segment", x = 2, xend = 2, y = lower, yend = upper, linewidth = 0.25, color="gray70") +
+  
+      annotate(geom="text", x = 3, y = sessY, label="base", color="black", size = f9) +
+      annotate(geom="text", x = 4, y = sessY, label="final", color="black", size = f9) +
+      annotate("segment", x = 2.6, xend = 4.4, y = lowLineY, yend = lowLineY, linewidth = 0.3) +
+      annotate(geom="text", x = 3.5, y = feedbkY, label="intrinsic", color="black", fontface="bold", size = f9) +
+      annotate("segment", x = 5, xend = 5, y = lower, yend = upper, linewidth = 0.25, color="gray70") +
+  
+      annotate(geom="text", x = 6, y = sessY, label="base", color="black", size = f9) +
+      annotate(geom="text", x = 7, y = sessY, label="final", color="black", size = f9) +
+      annotate("segment", x = 5.6, xend = 7.4, y = lowLineY, yend = lowLineY, linewidth = 0.3) +
+      annotate(geom="text", x = 6.5, y = feedbkY, label="vibrotactile", color="black", fontface="bold", size = f9) +
+      annotate("segment", x = 8, xend = 8, y = lower, yend = upper, linewidth = 0.25, color="gray70") +
+  
+      annotate(geom="text", x = 9, y = sessY, label="first", color="black", size = f9) +
+      annotate(geom="text", x = 10, y = sessY, label="last", color="black", size = f9) +
+      annotate("segment", x = 8.7, xend = 10.3, y = lowLineY, yend = lowLineY, linewidth = 0.3) +
+      annotate(geom="text", x = 9.5, y = feedbkY, label="vibrotactile", color="black", fontface="bold", size = f9) +
+  
+      guides(y=guide_axis_truncated(trunc_lower = lower, trunc_upper = upper))
+```
+
+```{r SS_IndSpeed, echo=FALSE}
+lower <- 0
+upper <- 30
+incr <- 10
+sessY <- upper*-0.09
+lowLineY <- upper*-0.16
+feedbkY <- upper*-0.23
+taskY <- upper*1.13
+highLineY <- upper*1.08
+
+# Create ggplot2 barplot
+speed_ind <- ggplot(SubSpeed, aes(x = xPos, y = mean)) + 
+      # Add lines for individuals
+      geom_line(aes(group=SubPerBlock, linetype=Deficit, color=Label), linewidth=0.65) +
+      # Add error bars
+      geom_errorbar(aes(ymin=mean-se, ymax=mean+se, color=Label), width=0, linewidth=0.75) +
+      # Add points
+      geom_point(aes(fill=Label), size=2.5, shape=21, color="black") +
+      scale_y_continuous(name="speed [cm/s]", breaks=seq(lower, upper, incr)) +
+      scale_x_continuous(limits=c(0,11), expand = c(0, 0))
+
+speed_ind <- speed_ind + theme_RNM + theme(legend.position="top") + 
+      scale_color_manual(name="Participant",values=lines3, guide="none") + 
+      scale_fill_manual(name="Participant", values=colors3) + 
+      scale_linetype_manual(name="Deficit",values=c("12","33")) + 
+  
+      annotate("segment", x = 0.3, xend = 7.7, y = highLineY, yend = highLineY, linewidth = 0.3) +
+      annotate(geom="text", x = 3.5, y = taskY, label="TESTING", color="black", fontface="bold", size = f9) +
+      annotate("segment", x = 8.3, xend = 10.7, y = highLineY, yend = highLineY, linewidth = 0.3) +
+      annotate(geom="text", x = 9.5, y = taskY, label="TRAINING", color="black", fontface="bold", size = f9) +
+  
+      annotate(geom="text", x = 1, y = sessY, label="base", color="black", size = f9) +
+      annotate("segment", x = 0.6, xend = 1.4, y = lowLineY, yend = lowLineY, linewidth = 0.3) +
+      annotate(geom="text", x = 1, y = feedbkY, label="visual", color="black", fontface="bold", size = f9) +
+      annotate("segment", x = 2, xend = 2, y = lower, yend = upper, linewidth = 0.25, color="gray70") +
+  
+      annotate(geom="text", x = 3, y = sessY, label="base", color="black", size = f9) +
+      annotate(geom="text", x = 4, y = sessY, label="final", color="black", size = f9) +
+      annotate("segment", x = 2.6, xend = 4.4, y = lowLineY, yend = lowLineY, linewidth = 0.3) +
+      annotate(geom="text", x = 3.5, y = feedbkY, label="intrinsic", color="black", fontface="bold", size = f9) +
+      annotate("segment", x = 5, xend = 5, y = lower, yend = upper, linewidth = 0.25, color="gray70") +
+  
+      annotate(geom="text", x = 6, y = sessY, label="base", color="black", size = f9) +
+      annotate(geom="text", x = 7, y = sessY, label="final", color="black", size = f9) +
+      annotate("segment", x = 5.6, xend = 7.4, y = lowLineY, yend = lowLineY, linewidth = 0.3) +
+      annotate(geom="text", x = 6.5, y = feedbkY, label="vibrotactile", color="black", fontface="bold", size = f9) +
+      annotate("segment", x = 8, xend = 8, y = lower, yend = upper, linewidth = 0.25, color="gray70") +
+  
+      annotate(geom="text", x = 9, y = sessY, label="first", color="black", size = f9) +
+      annotate(geom="text", x = 10, y = sessY, label="last", color="black", size = f9) +
+      annotate("segment", x = 8.7, xend = 10.3, y = lowLineY, yend = lowLineY, linewidth = 0.3) +
+      annotate(geom="text", x = 9.5, y = feedbkY, label="vibrotactile", color="black", fontface="bold", size = f9) +
+  
+      guides(y=guide_axis_truncated(trunc_lower = lower, trunc_upper = upper))
+```
+
+```{r SS_IndRatio, echo=FALSE}
+lower <- 0
+upper <- 40
+incr <- 10
+sessY <- upper*-0.09
+lowLineY <- upper*-0.16
+feedbkY <- upper*-0.23
+taskY <- upper*1.13
+highLineY <- upper*1.08
+
+# Create ggplot2 barplot
+ratio_ind <- ggplot(SubRatio, aes(x = xPos, y = mean)) + 
+      # Add lines for individuals
+      geom_line(aes(group=SubPerBlock, linetype=Deficit, color=Label), linewidth=0.65) +
+      # Add error bars
+      geom_errorbar(aes(ymin=mean-se, ymax=mean+se, color=Label), width=0, linewidth=0.75) +
+      # Add points
+      geom_point(aes(fill=Label), size=2.5, shape=21, color="black") +
+      scale_y_continuous(name="path length ratio", breaks=seq(lower, upper, incr), 
+        labels = c(1,10,20,30,40)) + 
+      scale_x_continuous(limits=c(0,11), expand = c(0, 0))
+
+ratio_ind <- ratio_ind + theme_RNM + theme(legend.position="top") + 
+      scale_color_manual(name="Participant",values=lines3, guide="none") + 
+      scale_fill_manual(name="Participant", values=colors3) + 
+      scale_linetype_manual(name="Deficit",values=c("12","33")) + 
+  
+      annotate("segment", x = 0.3, xend = 7.7, y = highLineY, yend = highLineY, linewidth = 0.3) +
+      annotate(geom="text", x = 3.5, y = taskY, label="TESTING", color="black", fontface="bold", size = f9) +
+      annotate("segment", x = 8.3, xend = 10.7, y = highLineY, yend = highLineY, linewidth = 0.3) +
+      annotate(geom="text", x = 9.5, y = taskY, label="TRAINING", color="black", fontface="bold", size = f9) +
+  
+      annotate(geom="text", x = 1, y = sessY, label="base", color="black", size = f9) +
+      annotate("segment", x = 0.6, xend = 1.4, y = lowLineY, yend = lowLineY, linewidth = 0.3) +
+      annotate(geom="text", x = 1, y = feedbkY, label="visual", color="black", fontface="bold", size = f9) +
+      annotate("segment", x = 2, xend = 2, y = lower, yend = upper, linewidth = 0.25, color="gray70") +
+  
+      annotate(geom="text", x = 3, y = sessY, label="base", color="black", size = f9) +
+      annotate(geom="text", x = 4, y = sessY, label="final", color="black", size = f9) +
+      annotate("segment", x = 2.6, xend = 4.4, y = lowLineY, yend = lowLineY, linewidth = 0.3) +
+      annotate(geom="text", x = 3.5, y = feedbkY, label="intrinsic", color="black", fontface="bold", size = f9) +
+      annotate("segment", x = 5, xend = 5, y = lower, yend = upper, linewidth = 0.25, color="gray70") +
+  
+      annotate(geom="text", x = 6, y = sessY, label="base", color="black", size = f9) +
+      annotate(geom="text", x = 7, y = sessY, label="final", color="black", size = f9) +
+      annotate("segment", x = 5.6, xend = 7.4, y = lowLineY, yend = lowLineY, linewidth = 0.3) +
+      annotate(geom="text", x = 6.5, y = feedbkY, label="vibrotactile", color="black", fontface="bold", size = f9) +
+      annotate("segment", x = 8, xend = 8, y = lower, yend = upper, linewidth = 0.25, color="gray70") +
+  
+      annotate(geom="text", x = 9, y = sessY, label="first", color="black", size = f9) +
+      annotate(geom="text", x = 10, y = sessY, label="last", color="black", size = f9) +
+      annotate("segment", x = 8.7, xend = 10.3, y = lowLineY, yend = lowLineY, linewidth = 0.3) +
+      annotate(geom="text", x = 9.5, y = feedbkY, label="vibrotactile", color="black", fontface="bold", size = f9) +
+  
+      guides(y=guide_axis_truncated(trunc_lower = lower, trunc_upper = upper))
+```
+
+```{r ind_plot, echo=FALSE, fig.height=6.45, fig.width=6, fig.cap="Individual kinematic results for participants with deficits. A) Euclidean target capture error with individual learning trends shown by faded lines, B) dimensional target capture speed, and C) total path length ratio. Target capture error is percent workspace difference between the center of the target and the final hand position. Target capture speed is the distance traversed divided by time elapsed from “GO” cue to squeeze. Path length ratio is the actual distance traversed divided by the optimal distance from start position target. The training sessions included after-squeeze visual and vibration feedback for correction. Testing sessions did not include after-squeeze corrections."}
+
+ggarrange(error_ind, NULL, speed_ind, NULL, ratio_ind, align="v", heights=c(3,0.1,3.0,0.1,3.0),
+          nrow = 5, labels = c("A","","B","","C"), common.legend = TRUE) 
+```
+
+\newpage
+
+# Hypothesis 2
+
+Participants will find VTF and the training useful, motivating, and satisfying.
+
+```{r plot_sus, echo = FALSE}
+ss_avgSUS <- data_summary(SUS, varname="Score", groupnames = c("Group","Scale"))
+ss_avgSUS$ci_min <- ss_avgSUS$mean - ss_avgSUS$ic
+ss_avgSUS$ci_max <- ss_avgSUS$mean + ss_avgSUS$ic
+if (ss_avgSUS$ci_min < 1) {
+  ss_avgSUS$ci_min <- 1
+}
+if (ss_avgSUS$ci_max > 100) {
+  ss_avgSUS$ci_max <- 100
+}
+
+# Create ggplot2 barplot
+sus_plot <- ggplot(ss_avgSUS, aes(x = Scale, y = mean)) +
+      geom_hline(yintercept = 68, linetype = "dashed", color = "black", linewidth = 0.25) +
+      # Add individual subject points
+      geom_dotplot(data = SUS, aes(x = Scale, y = Score), binaxis='y', stackdir='center',
+               stackratio=1, dotsize=1.15, fill = "grey80", color = "grey80") +
+      # Add error bars
+      geom_errorbar(aes(ymin=ci_min, ymax=ci_max), width=0, linewidth=1, color = "forestgreen") +
+      # Add mean data point and manually change symbol depending on group
+      geom_point(size = 6, color = "forestgreen", shape = 95) +
+      scale_y_continuous(name="survey scores", breaks=seq(0, 100, 20)) +
+      labs(title="Usability\n(SUS)") + 
+      guides(y=guide_axis_truncated(trunc_lower = 37, trunc_upper = 100)) + expand_limits(y = c(37,100))
+
+sus_plot <- sus_plot + theme_RNM
+```
+
+```{r plot_imi, echo = FALSE}
+ss_avgIMI <- data_summary(IMI, varname="Score", groupnames = c("Group","Scale"))
+ss_avgIMI$ci_min <- ss_avgIMI$mean - ss_avgIMI$ic
+ss_avgIMI$ci_max <- ss_avgIMI$mean + ss_avgIMI$ic
+for (s in 1:6) {
+  if (ss_avgIMI$ci_min[s] < 1) {
+    ss_avgIMI$ci_min[s] <- 1
+  }
+  if (ss_avgIMI$ci_max[s] > 7) {
+    ss_avgIMI$ci_max[s] <- 7
+  }
+}
+
+# Create ggplot2 barplot
+imi_plot <- ggplot(ss_avgIMI, aes(x = Scale, y = mean)) +
+      geom_hline(yintercept = 4, linetype = "dashed", color = "black", linewidth = 0.25) +
+      # Add individual subject points
+      geom_dotplot(data = IMI, aes(x = Scale, y = Score), binaxis='y', stackdir='center',
+               stackratio=1, dotsize=1.1, fill = "grey80", color = "grey80") +
+      # Add error bars
+      geom_errorbar(aes(ymin=ci_min, ymax=ci_max), width=0, linewidth=1, color = "forestgreen") +
+      # Add mean data point and manually change symbol depending on group
+      geom_point(size = 6, color = "forestgreen", shape = 95) +
+      scale_y_continuous(name="survey scores", breaks=seq(1, 7, 1)) +
+      labs(title="Intrinsic Motivation\n(IMI)") +
+      guides(y = guide_axis_truncated(trunc_lower = 1, trunc_upper = 7)) + expand_limits(y = c(1,7))
+
+imi_plot <- imi_plot + theme_RNM + theme(axis.text.x = element_text(angle = 40)) 
+```
+
+```{r plot_qst_p1, echo = FALSE}
+ss_QST1 <- QST[which(QST$Scale=="Average"),]
+ss_avgQST <- data_summary(ss_QST1, varname="Score", groupnames = c("Group","Scale"))
+ss_avgQST$ci_min <- ss_avgQST$mean - ss_avgQST$ic
+ss_avgQST$ci_max <- ss_avgQST$mean + ss_avgQST$ic
+if (ss_avgQST$ci_min < 1) {
+  ss_avgQST$ci_min <- 1
+}
+if (ss_avgQST$ci_max > 5) {
+  ss_avgQST$ci_max <- 5
+}
+
+# Create ggplot2 barplot
+qst_plot1 <- ggplot(ss_avgQST, aes(x = Scale, y = mean)) +
+      geom_hline(yintercept = 3, linetype = "dashed", color = "black", linewidth = 0.25) +
+      # Add individual subject points
+      geom_dotplot(data = ss_QST1, aes(x = Scale, y = Score), binaxis='y', stackdir='center',
+               stackratio=1, dotsize=0.75, fill = "grey80", color = "grey80") +
+      # Add error bars
+      geom_errorbar(aes(ymin=ci_min, ymax=ci_max), width=0, linewidth=1, color = "forestgreen") +
+      # Add mean data point and manually change symbol depending on group
+      geom_point(size = 6, color = "forestgreen", shape = 95) +
+      scale_y_continuous(name="survey scores", breaks=seq(1, 5, 1)) +
+      labs(title="Satisfaction\n(QUEST)") +
+  guides(y=guide_axis_truncated(trunc_lower = 1, trunc_upper = 5)) + expand_limits(y = c(1,5))
+
+qst_plot1 <- qst_plot1 + theme_RNM
+```
+
+```{r plot_qst_p2_h, echo = FALSE}
+#col <- rainbow(20)
+#col <- rev(col[c(1,3,8,13,16,18)])
+
+library(scales)
+#show_col(hue_pal()(12))
+palette <- hue_pal()(12)
+col <- rev(palette[c(1,2,5,9,10,12)])
+
+ss_QST2 <- QST[which(QST$Scale!="Average"),]
+ss_subQST <- data_summary(ss_QST2, varname="Score", groupnames = c("Group","Scale"))
+ss_subQST$ci_min <- ss_subQST$mean - ss_subQST$ic
+ss_subQST$ci_max <- ss_subQST$mean + ss_subQST$ic
+for (s in 1:6) {
+  if (ss_subQST$ci_min[s] < 1) {
+    ss_subQST$ci_min[s] <- 1
+  }
+  if (ss_subQST$ci_max[s] > 5) {
+    ss_subQST$ci_max[s] <- 5
+  }
+}
+qst_summ <- table(qItems$Items)
+qst_summ <- data.frame(Scale = names(qst_summ),
+                       Frequency = as.numeric(qst_summ))
+ordered <- qst_summ$Scale[order(qst_summ$Frequency, decreasing=FALSE)]
+qst_summ$Scale <- factor(qst_summ$Scale, levels = ordered)
+ss_QST2$Scale <- factor(ss_QST2$Scale, levels = ordered)
+ss_subQST$Scale <- factor(ss_subQST$Scale, levels = ordered)
+
+plot <- ggplot(ss_subQST, aes(x = Scale, y = mean, color = Scale)) +
+      geom_hline(yintercept = 3, linetype = "dashed", color = "black", linewidth = 0.25) +
+      # Add individual subject points
+      geom_dotplot(data = ss_QST2, aes(x = Scale, y = Score), binaxis='y', stackdir='center',
+               stackratio=1, dotsize=0.6, fill = "grey80", color = "grey80") +
+      # Add error bars
+      geom_errorbar(aes(ymin=ci_min, ymax=ci_max), width=0, linewidth=0.95) +
+      # Add mean data point and manually change symbol depending on group
+      geom_point(size = 6, shape = 108) +
+      scale_y_continuous(name="items scores", breaks=seq(2, 5, 1)) +
+      scale_x_discrete(name ="Scales", limits=levels(ss_subQST$Scale)) +
+      guides(x = guide_axis_truncated(trunc_lower = 1.9, trunc_upper = 5)) +
+  expand_limits(y = c(1,5)) +
+  theme(panel.background = element_rect(fill = "white"), panel.border = element_blank(),
+        axis.line = element_line(color = "black"), axis.ticks = element_line(color = "black"),
+        axis.ticks.length=unit(0.1,"inch"),
+        axis.title.y = element_blank(), axis.line.y = element_blank(),
+        axis.ticks.y = element_blank(), axis.text.y = element_blank(),
+        axis.text.x = element_text(size = 10, color = "black"),
+        axis.title.x = element_text(size = 10, color = "black", face = "bold"),
+        legend.position = "none") +
+  scale_color_manual(values=col, guide="none") +
+  coord_flip()
+
+upper <- max(qst_summ$Frequency, na.rm=TRUE)
+hist <- ggplot(qst_summ, aes(x = Scale, y = Frequency, fill = Scale)) +
+  geom_bar(stat = "identity", width=0.65) +
+  scale_y_continuous(breaks=seq(0, upper, 1)) + scale_y_reverse() +
+  theme(panel.background = element_rect(fill = "white"), panel.border = element_blank(),
+        axis.line = element_line(color = "black"), axis.ticks = element_line(color = "black"),
+        axis.ticks.length=unit(0.1,"inch"),
+        axis.title.y = element_blank(), axis.line.y = element_blank(),
+        axis.ticks.y = element_blank(), axis.text.y = element_blank(),
+        axis.text.x = element_text(size = 10, color = "black"),
+        axis.title.x = element_text(size = 10, color = "black", face = "bold"),
+        legend.position = "none") +
+  scale_fill_manual(values=col, guide="none") +
+  guides(x=guide_axis_truncated(trunc_lower = 0, trunc_upper = upper+0.2)) +
+  coord_flip() + labs(y="frequency")
+
+qst_plot2 <-
+  ggarrange(hist, plot, align="h", widths=c(0.6,1)) +
+  labs(title = 'Ranked Satisfaction Items\n(QUEST)') +
+  theme(plot.title = element_text(size = 10, color = "black", face = "bold", hjust = 0.5, vjust=0),
+        plot.tag = element_text(size = 10, color = "black", face = "plain")) +
+  #draw_text('Ranked Satisfaction Items\n(QUEST)', x = 0.5, y = 1, size = 11, fontface = "bold", color = "black") + 
+  draw_text(c("Instructions","Effectiveness","Comfort","Safety","Easy to Use","Weight"), 
+            x = 0.5, y = seq(0.895, 0.315, by=-0.116), 
+            size = 8, fontface = "bold", color = rev(col))
+  
+#top <- 20
+#barplot(height=1:top, names=seq(1:top), col=rainbow(top)) 
+```
+
+```{r plot_qst_p2_v, echo = FALSE, include = FALSE}
+# ss_QST <- QST[which(QST$Scale!="Average"),]
+# ss_avgQST <- data_summary(ss_QST, varname="Score", groupnames = c("Group","Scale"))
+# ss_avgQST$ci_min <- ss_avgQST$mean - ss_avgQST$ic
+# ss_avgQST$ci_max <- ss_avgQST$mean + ss_avgQST$ic
+# for (s in 1:6) {
+#   if (ss_avgQST$ci_min[s] < 1) {
+#     ss_avgQST$ci_min[s] <- 1
+#   }
+#   if (ss_avgQST$ci_max[s] > 5) {
+#     ss_avgQST$ci_max[s] <- 5
+#   }
+# }
+# qst_summ <- table(qItems$Items)
+# qst_summ <- data.frame(Scale = names(qst_summ), 
+#                        Frequency = as.numeric(qst_summ))
+# ordered <- qst_summ$Scale[order(qst_summ$Frequency, decreasing=FALSE)]
+# qst_summ$Scale <- factor(qst_summ$Scale, levels = ordered)
+# ss_QST$Scale <- factor(ss_QST$Scale, levels = ordered)
+# ss_avgQST$Scale <- factor(ss_avgQST$Scale, levels = ordered)
+# 
+# plot <- ggplot(ss_avgQST, aes(x = Scale, y = mean, fill = Scale, color = Scale)) +
+#       geom_hline(yintercept = 3, linetype = "dashed", color = "black", linewidth = 0.25) +
+#       # Add individual subject points
+#       geom_dotplot(data = ss_QST, aes(x = Scale, y = Score), binaxis='y', stackdir='center',
+#                stackratio=1, dotsize=1.5, fill = "grey80", color = "grey80") +
+#       # Add error bars
+#       geom_errorbar(aes(ymin=ci_min, ymax=ci_max), width=0, linewidth=1.2) +
+#       # Add mean data point and manually change symbol depending on group
+#       geom_point(size = 4, shape = 19) +
+#       scale_y_continuous(name="survey scores", breaks=seq(-10, 5, 1)) +
+#       scale_x_discrete(name ="Scales", limits=levels(ss_avgQST$Scale)) + 
+#       guides(y = guide_axis_truncated(trunc_lower = 1, trunc_upper = 5)) + 
+#       expand_limits(y = c(1,5)) +
+#       theme_RNM + theme(axis.title.x = element_blank(), 
+#                         axis.text.x = element_text(size = 11, color = "black", angle = 40, vjust = 0.6), 
+#                         legend.position = "none")
+# 
+# upper <- max(qst_summ$Frequency, na.rm=TRUE)
+# hist <- ggplot(qst_summ, aes(x = Scale, y = Frequency, fill = Scale)) + 
+#     geom_bar(stat = "identity", width=0.65) +
+#     scale_y_continuous(name="frequency", breaks=seq(0, upper, 1)) + 
+#     guides(y=guide_axis_truncated(trunc_lower = 0, trunc_upper = upper+0.5))  + 
+#     theme_RNM + theme(axis.title.x = element_blank(), legend.position = "none")
+#   
+# 
+# qst_plot2 <- 
+#   ggarrange(plot, hist, align="h", heights=c(1,1), nrow = 2) + 
+#   labs(title = 'Important Decision Criteria\n(QUEST)', tag = 'D)') +
+#   theme(plot.title = element_text(size = 12, color = "black", face = "bold", hjust = 0.5),
+#         plot.tag = element_text(size = 12, color = "black", face = "plain"))
+```
+
+```{r survey_plot, echo=FALSE, fig.height=4.84, fig.width=6, fig.cap="Cohort subjective user experience results for the A) System Usability Scale score, B) Intrinsic Motivation Inventory score, C-D) Quebec User Evaluation of Satisfaction with assistive Technology scores (C: mean score, D: frequency and score for each satisfaction item). Gray circles: individual scores. Black dashed lines: threshold for positive user experience. Error bars: 95% confidence interval of the mean. *Pressure/tension scores were subtracted from 8 to visually have passable scores above threshold."}
+# ggarrange(
+#   ggarrange(imi_plot, 
+#       ggarrange(sus_plot, qst_plot1, ncol = 2),
+#     nrow = 2), qst_plot2,
+#   labels = c("A","B","C", "D"), ncol = 2, font.label = list(size = 30, face = "bold"))
+
+
+# layout <- "ABBB
+#            CDDD
+#            #DDD"
+# sus_plot + imi_plot + qst_plot1 +  qst_plot2 +
+#   plot_layout(design = layout, widths = c(0.5,1)) +
+#   plot_annotation(tag_levels = list(c('A)','B)','C)','D)'))) &
+#   theme(plot.tag = element_text(size = 11))
+
+p1 <- ggarrange(sus_plot, NULL, imi_plot, align="h", ncol = 3, widths=c(1,0.2,3), labels = c("A","","B"))
+p2 <- ggarrange(qst_plot1, NULL, qst_plot2, ncol = 3, widths=c(1,0.2,3), labels = c("C","","D"))
+ggarrange(p1, p2, nrow = 2, font.label = list(size = 12, face = "bold"))
+
+```
+
+
+# Poster figures
+```{r poster_fig1, include=FALSE, fig.height=9.5, fig.width=27}
+lower <- 0
+upper <- 100
+incr <- 20
+sessY <- upper*-0.04
+lowLineY <- upper*-0.07
+feedbkY <- upper*-0.1
+taskY <- upper*1.06
+highLineY <- upper*1.03
+p1 <- upper*0.90
+p2 <- upper*0.8
+
+pw_error$y.position <- c(p2,p2,p1,p2)
+
+Learn$Block <- factor(Learn$Block, levels = c('V_01','N_01','N_22','T_01','T_22','C_02','C_21'))
+Learn$xPos <- rep(c(1,2.8,5.8,8.8,10.2,4.2,7.2), by=levels(Learn$SubID))
+
+AvgLearn  <- data_summary(Learn, varname="TrialError", groupnames=c("Session", "BlockType", "Block", "xPos"))
+
+
+# Create ggplot2 barplot
+error <- ggplot(AvgLearn, aes(x=xPos, y=mean)) + 
+      # Add lines for individuals
+      geom_line(data = Learn, aes(x=xPos, y=TrialError, color=BlockType, group=SubPerBlock, linetype=Err_Signif), linewidth = 0.25, alpha = 0.65) +
+      # Add lines for average group
+      geom_line(aes(group=BlockType, color=BlockType), size = 1.15) +
+      # Add error bars
+      geom_errorbar(aes(ymin=mean-se, ymax=mean+se, color=BlockType), width=0, linewidth=1.75) +
+      # Add mean data point and manually change symbol depending on group
+      geom_point(aes(color=BlockType, fill=BlockType, shape=BlockType), size = 6) +
+      scale_y_continuous(name="error [%workspace]", breaks=seq(lower, upper, incr)) + 
+      scale_x_continuous(limits=c(0,11), expand = c(0, 0))
+
+error <- 
+  error + theme_poster + theme(legend.position="top") + 
+      scale_shape_manual(name="Feedback Type", values=shapes, guide="none") + 
+      scale_color_manual(name="Feedback Type", values=colors1, guide="none") + 
+      scale_fill_manual(name="Feedback Type", values=colors1, guide="none") +
+      scale_linetype_manual(name="Within Subject Change (thinner lines)", values=c(2,1),
+                            guide = guide_legend(override.aes = list(alpha = 1))) +
+  
+      annotate("segment", x = 0.3, xend = 7.7, y = highLineY, yend = highLineY, linewidth = 0.3) +
+      annotate(geom="text", x = 3.5, y = taskY, label="TESTING", color="black", fontface="bold", size = f24) +
+      annotate("segment", x = 8.3, xend = 10.7, y = highLineY, yend = highLineY, linewidth = 0.3) +
+      annotate(geom="text", x = 9.5, y = taskY, label="TRAINING", color="black", fontface="bold", size = f24) +
+  
+      annotate(geom="text", x = 1, y = sessY, label="base", color="black", size = f24) +
+      annotate("segment", x = 0.6, xend = 1.4, y = lowLineY, yend = lowLineY, linewidth = 0.3) +
+      annotate(geom="text", x = 1, y = feedbkY, label="visual", color="black", fontface="bold", size = f24) +
+      annotate("segment", x = 2, xend = 2, y = lower, yend = upper, linewidth = 0.25, color="gray70") +
+  
+      annotate(geom="text", x = 3, y = sessY, label="base", color="black", size = f24) +
+      annotate(geom="text", x = 4, y = sessY, label="final", color="black", size = f24) +
+      annotate("segment", x = 2.6, xend = 4.4, y = lowLineY, yend = lowLineY, linewidth = 0.3) +
+      annotate(geom="text", x = 3.5, y = feedbkY, label="intrinsic", color="black", fontface="bold", size = f24) +
+      annotate("segment", x = 5, xend = 5, y = lower, yend = upper, linewidth = 0.25, color="gray70") +
+  
+      annotate(geom="text", x = 6, y = sessY, label="base", color="black", size = f24) +
+      annotate(geom="text", x = 7, y = sessY, label="final", color="black", size = f24) +
+      annotate("segment", x = 5.6, xend = 7.4, y = lowLineY, yend = lowLineY, linewidth = 0.3) +
+      annotate(geom="text", x = 6.5, y = feedbkY, label="vibrotactile", color="black", fontface="bold", size = f24) +
+      annotate("segment", x = 8, xend = 8, y = lower, yend = upper, linewidth = 0.25, color="gray70") +
+  
+      annotate(geom="text", x = 9, y = sessY, label="first", color="black", size = f24) +
+      annotate(geom="text", x = 10, y = sessY, label="last", color="black", size = f24) +
+      annotate("segment", x = 8.7, xend = 10.3, y = lowLineY, yend = lowLineY, linewidth = 0.3) +
+      annotate(geom="text", x = 9.5, y = feedbkY, label="vibrotactile", color="black", fontface="bold", size = f24) +
+  
+      guides(y=guide_axis_truncated(trunc_lower = lower, trunc_upper = upper)) +
+   stat_pvalue_manual(pw_error, tip.length = 0, hide.ns = FALSE, label = "p", size = f24, color = "black")
+
+
+# Create ggplot2 barplot
+error_ind <- ggplot(SubError, aes(x = xPos, y = mean)) + 
+      # Add lines for individuals
+      geom_line(aes(group=SubPerBlock, linetype=Deficit, color=Label), linewidth=1.15) +
+      # Add error bars
+      geom_errorbar(aes(ymin=mean-se, ymax=mean+se, color=Label), width=0, linewidth=1.75) +
+      # Add points
+      geom_point(aes(fill=Label), size=6, shape=21, color="black") +
+      scale_y_continuous(name="error [%workspace]", breaks=seq(lower, upper, incr)) +
+      scale_x_continuous(limits=c(0,11), expand = c(0, 0))
+
+error_ind <- error_ind + theme_poster + theme(legend.position="top") + 
+      scale_color_manual(name="Participant",values=lines3, guide="none") + 
+      scale_fill_manual(name="Participant", values=colors3) + 
+      scale_linetype_manual(name="Deficit",values=c("12","33")) + 
+  
+      annotate("segment", x = 0.3, xend = 7.7, y = highLineY, yend = highLineY, linewidth = 0.3) +
+      annotate(geom="text", x = 3.5, y = taskY, label="TESTING", color="black", fontface="bold", size = f24) +
+      annotate("segment", x = 8.3, xend = 10.7, y = highLineY, yend = highLineY, linewidth = 0.3) +
+      annotate(geom="text", x = 9.5, y = taskY, label="TRAINING", color="black", fontface="bold", size = f24) +
+  
+      annotate(geom="text", x = 1, y = sessY, label="base", color="black", size = f24) +
+      annotate("segment", x = 0.6, xend = 1.4, y = lowLineY, yend = lowLineY, linewidth = 0.3) +
+      annotate(geom="text", x = 1, y = feedbkY, label="visual", color="black", fontface="bold", size = f24) +
+      annotate("segment", x = 2, xend = 2, y = lower, yend = upper, linewidth = 0.25, color="gray70") +
+  
+      annotate(geom="text", x = 3, y = sessY, label="base", color="black", size = f24) +
+      annotate(geom="text", x = 4, y = sessY, label="final", color="black", size = f24) +
+      annotate("segment", x = 2.6, xend = 4.4, y = lowLineY, yend = lowLineY, linewidth = 0.3) +
+      annotate(geom="text", x = 3.5, y = feedbkY, label="intrinsic", color="black", fontface="bold", size = f24) +
+      annotate("segment", x = 5, xend = 5, y = lower, yend = upper, linewidth = 0.25, color="gray70") +
+  
+      annotate(geom="text", x = 6, y = sessY, label="base", color="black", size = f24) +
+      annotate(geom="text", x = 7, y = sessY, label="final", color="black", size = f24) +
+      annotate("segment", x = 5.6, xend = 7.4, y = lowLineY, yend = lowLineY, linewidth = 0.3) +
+      annotate(geom="text", x = 6.5, y = feedbkY, label="vibrotactile", color="black", fontface="bold", size = f24) +
+      annotate("segment", x = 8, xend = 8, y = lower, yend = upper, linewidth = 0.25, color="gray70") +
+  
+      annotate(geom="text", x = 9, y = sessY, label="first", color="black", size = f24) +
+      annotate(geom="text", x = 10, y = sessY, label="last", color="black", size = f24) +
+      annotate("segment", x = 8.7, xend = 10.3, y = lowLineY, yend = lowLineY, linewidth = 0.3) +
+      annotate(geom="text", x = 9.5, y = feedbkY, label="vibrotactile", color="black", fontface="bold", size = f24) +
+  
+      guides(y=guide_axis_truncated(trunc_lower = lower, trunc_upper = upper))
+
+ggarrange(error, NULL, error_ind, ncol = 3, align="h", widths=c(3,0.2,3))
+
+```
+
+```{r poster_fig2, include=FALSE, fig.height=9.5, fig.width=27}
+# Create ggplot2 barplot
+sus_plot <- ggplot(ss_avgSUS, aes(x = Scale, y = mean)) +
+      geom_hline(yintercept = 68, linetype = "dashed", color = "black", linewidth = 0.25) +
+      # Add individual subject points
+      geom_dotplot(data = SUS, aes(x = Scale, y = Score), binaxis='y', stackdir='center',
+               stackratio=1, dotsize=0.75, fill = "grey80", color = "grey80") +
+      # Add error bars
+      geom_errorbar(aes(ymin=ci_min, ymax=ci_max), width=0, linewidth=1.75, color = "forestgreen") +
+      # Add mean data point and manually change symbol depending on group
+      geom_point(size = 12, color = "forestgreen", shape = 95) +
+      scale_y_continuous(name="survey scores", breaks=seq(0, 100, 20)) +
+      labs(title="Usability\n(SUS)") + 
+      guides(y=guide_axis_truncated(trunc_lower = 37, trunc_upper = 100)) + expand_limits(y = c(37,100))
+sus_plot <- sus_plot + theme_poster
+
+
+# Create ggplot2 barplot
+imi_plot <- ggplot(ss_avgIMI, aes(x = Scale, y = mean)) +
+      geom_hline(yintercept = 4, linetype = "dashed", color = "black", linewidth = 0.25) +
+      # Add individual subject points
+      geom_dotplot(data = IMI, aes(x = Scale, y = Score), binaxis='y', stackdir='center',
+               stackratio=1, dotsize=0.75, fill = "grey80", color = "grey80") +
+      # Add error bars
+      geom_errorbar(aes(ymin=ci_min, ymax=ci_max), width=0, linewidth=1.75, color = "forestgreen") +
+      # Add mean data point and manually change symbol depending on group
+      geom_point(size = 12, color = "forestgreen", shape = 95) +
+      scale_y_continuous(name="survey scores", breaks=seq(1, 7, 1)) +
+      labs(title="Intrinsic Motivation\n(IMI)") +
+      guides(y = guide_axis_truncated(trunc_lower = 1, trunc_upper = 7)) + expand_limits(y = c(1,7))
+imi_plot <- imi_plot + theme_poster + theme(axis.text.x = element_text(angle = 40, hjust = 1, vjust = 1)) 
+
+
+# Create ggplot2 barplot
+qst_plot1 <- ggplot(ss_avgQST, aes(x = Scale, y = mean)) +
+      geom_hline(yintercept = 3, linetype = "dashed", color = "black", linewidth = 0.25) +
+      # Add individual subject points
+      geom_dotplot(data = ss_QST1, aes(x = Scale, y = Score), binaxis='y', stackdir='center',
+               stackratio=1, dotsize=0.75, fill = "grey80", color = "grey80") +
+      # Add error bars
+      geom_errorbar(aes(ymin=ci_min, ymax=ci_max), width=0, linewidth=1.75, color = "forestgreen") +
+      # Add mean data point and manually change symbol depending on group
+      geom_point(size = 12, color = "forestgreen", shape = 95) +
+      scale_y_continuous(name="survey scores", breaks=seq(1, 5, 1)) +
+      labs(title="Satisfaction\n(QUEST)") +
+  guides(y=guide_axis_truncated(trunc_lower = 1, trunc_upper = 5)) + expand_limits(y = c(1,5))
+qst_plot1 <- qst_plot1 + theme_poster
+
+
+plot <- ggplot(ss_subQST, aes(x = Scale, y = mean, color = Scale)) +
+      geom_hline(yintercept = 3, linetype = "dashed", color = "black", linewidth = 0.25) +
+      # Add individual subject points
+      geom_dotplot(data = ss_QST2, aes(x = Scale, y = Score), binaxis='y', stackdir='center',
+               stackratio=1, dotsize=0.9, fill = "grey80", color = "grey80") +
+      # Add error bars
+      geom_errorbar(aes(ymin=ci_min, ymax=ci_max), width=0, linewidth=1.5) +
+      # Add mean data point and manually change symbol depending on group
+      geom_point(size = 12, shape = 108) +
+      scale_y_continuous(name="items scores", breaks=seq(2, 5, 1)) +
+      scale_x_discrete(name ="Scales", limits=levels(ss_subQST$Scale)) +
+      guides(x = guide_axis_truncated(trunc_lower = 1.9, trunc_upper = 5)) +
+  expand_limits(y = c(1,5)) +
+  theme(panel.background = element_rect(fill = "white"), panel.border = element_blank(),
+        plot.title = element_text(size = 20, color = "black", face = "bold", hjust = 0.5),
+        axis.line = element_line(color = "black"), axis.ticks = element_line(color = "black"),
+        axis.ticks.length=unit(0.1,"inch"),
+        axis.title.y = element_blank(), axis.line.y = element_blank(),
+        axis.ticks.y = element_blank(), axis.text.y = element_blank(),
+        axis.text.x = element_text(size = 26, color = "black"),
+        axis.title.x = element_text(size = 30, color = "black", face = "bold"),
+        legend.position = "none") +
+  scale_color_manual(values=col, guide="none") +
+  coord_flip()
+
+upper <- max(qst_summ$Frequency, na.rm=TRUE)
+hist <- ggplot(qst_summ, aes(x = Scale, y = Frequency, fill = Scale)) +
+  geom_bar(stat = "identity", width=0.65) +
+  scale_y_continuous(breaks=seq(0, upper, 1)) + scale_y_reverse() +
+  theme(panel.background = element_rect(fill = "white"), panel.border = element_blank(),
+        plot.title = element_text(size = 20, color = "black", face = "bold", hjust = 0.5),
+        axis.line = element_line(color = "black"), axis.ticks = element_line(color = "black"),
+        axis.ticks.length=unit(0.1,"inch"),
+        axis.title.y = element_blank(), axis.line.y = element_blank(),
+        axis.ticks.y = element_blank(), axis.text.y = element_blank(),
+        axis.text.x = element_text(size = 26, color = "black"),
+        axis.title.x = element_text(size = 30, color = "black", face = "bold"),
+        legend.position = "none") +
+  scale_fill_manual(values=col, guide="none") +
+  guides(x=guide_axis_truncated(trunc_lower = 0, trunc_upper = upper+0.2)) +
+  coord_flip() + labs(y="frequency")
+
+qst_plot2 <-
+  ggarrange(hist, plot, align="h", widths=c(0.6,1)) +
+  labs(title = 'Ranked Satisfaction Items\n(QUEST)') +
+  theme(plot.title = element_text(size = 30, color = "black", face = "bold", hjust = 0.5, vjust=0)) +
+  draw_text(c("Instructions","Effectiveness","Comfort","Safety","Easy to Use","Weight"), 
+            x = 0.5, y = c(0.905, 0.76, 0.61, 0.46, 0.315, 0.17), 
+            size = 24, fontface = "bold", color = rev(col))
+
+
+p1 <- ggarrange(sus_plot, NULL, imi_plot, NULL, qst_plot1, 
+          ncol = 5, align="h", widths=c(1,0.2,3,0.2,1))
+ggarrange(p1, NULL, qst_plot2, 
+          ncol = 3, widths=c(5,0.2,3))
+```
+
